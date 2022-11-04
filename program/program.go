@@ -13,8 +13,10 @@ import (
 
 // Options is the structure of program options
 type Options struct {
-	Version bool `help:"Show program version"`
-	// VersionCmd VersionCmd `name:"version" cmd:"" help:"show program version"`
+	//Version bool `help:"Show program version"`
+	VersionCmd VersionCmd `name:"version" cmd:"" help:"show program version"`
+
+	Brew Brew `cmd:"" help:"Create brew release files for a golang program in GitHub"`
 
 	Debug        bool   `group:"Info" help:"Show debugging information"`
 	OutputFormat string `group:"Info" enum:"auto,jsonl,terminal" default:"auto" help:"How to show program output (auto|terminal|jsonl)"`
@@ -48,11 +50,6 @@ func (program *Options) AfterApply() error {
 }
 
 func (program *Options) initLogging() {
-	if program.Version {
-		fmt.Println(Version)
-		os.Exit(0)
-	}
-
 	switch {
 	case program.Debug:
 		zerolog.SetGlobalLevel(zerolog.DebugLevel)

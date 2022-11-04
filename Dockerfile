@@ -15,8 +15,6 @@ RUN PROGRAM=$(ls /output); echo "#!/bin/sh\nexec '/usr/bin/$PROGRAM' \"\$@\"" > 
 FROM gcr.io/distroless/base:latest
 ARG PROGRAM=nothing
 
-#RUN apk add --no-cache libc6-compat ca-certificates
-
 COPY --from=builder /output/${PROGRAM} /
 USER 1000
 ENTRYPOINT [""]

@@ -86,3 +86,25 @@ func TestGenerateRecipe(t *testing.T) {
 
 	assert.Equal(t, expected, buf.String())
 }
+
+func TestRecipe_Normalize(t *testing.T) {
+	type fields struct {
+	}
+	tests := []struct {
+		name   string
+		Recipe Recipe
+		Owner  string
+		Repo   string
+	}{
+		{"nothing needed", Recipe{Owner: "o", Repo: "r"}, "o", "r"},
+		{"normalization", Recipe{Repo: "o/r"}, "o", "r"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := tt.Recipe
+			r.Normalize()
+			assert.Equal(t, tt.Owner, r.Owner)
+			assert.Equal(t, tt.Repo, r.Repo)
+		})
+	}
+}

@@ -26,6 +26,35 @@ type Recipe struct {
 	Files       []PackageFile `json:"-"`
 }
 
+func NewRecipe(repo, owner, version, description string) (*Recipe, error) {
+	if owner == "" {
+		parts := strings.Split(repo, "/")
+		if len(parts) != 2 {
+			return nil, errors.New("owner must be specified, or repo must be format owner/repo")
+		}
+
+		owner = parts[0]
+		repo = parts[1]
+	}
+
+	return &Recipe{
+		Owner:       owner,
+		Repo:        repo,
+		Version:     version,
+		Description: description,
+		Files:       []PackageFile{},
+	}, nil
+}
+
+// Normalize normalizes a recipe into separate owner and repo if it has an owner/repo string in the repo
+func (r *Recipe) Normalize() {
+	parts := strings.Split(r.Repo, "/")
+	if len(parts) == 2 {
+		r.Owner = parts[0]
+		r.Repo = parts[1]
+	}
+}
+
 func (b *Recipe) FillFromGithub() error {
 	client := github.NewClient(nil)
 

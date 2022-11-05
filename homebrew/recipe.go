@@ -7,7 +7,9 @@ import (
 	"errors"
 	"github.com/google/go-github/v48/github"
 	"github.com/rs/zerolog/log"
+	"golang.org/x/oauth2"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -56,7 +58,9 @@ func (r *Recipe) Normalize() {
 }
 
 func (b *Recipe) FillFromGithub() error {
-	client := github.NewClient(nil)
+	httpClient := githubHttpClient()
+
+	client := github.NewClient(httpClient)
 
 	if b.Description == "" {
 		repo, _, err := client.Repositories.Get(context.Background(), b.Owner, b.Repo)
@@ -93,6 +97,18 @@ func (b *Recipe) FillFromGithub() error {
 		}
 	}
 	return nil
+}
+
+func githubHttpClient() *http.Client {
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		ctx := context.Background()
+		ts := oauth2.StaticTokenSource(
+			&oauth2.Token{AccessToken: token},
+		)
+		return oauth2.NewClient(ctx, ts)
+	}
+
+	return http.DefaultClient
 }
 
 func filterFiles(b *Recipe, terms ...string) []PackageFile {

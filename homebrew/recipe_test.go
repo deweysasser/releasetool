@@ -1,7 +1,10 @@
 package homebrew
 
 import (
+	"bytes"
 	"github.com/stretchr/testify/assert"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -64,4 +67,22 @@ func TestParseRecipeFile(t *testing.T) {
 	assert.Equal(t, "v0.2.0", current.Version)
 	assert.Equal(t, "Cumulus", current.Repo)
 	assert.Equal(t, 4, len(current.Files))
+}
+
+func TestGenerateRecipe(t *testing.T) {
+	exp, err := os.ReadFile("parse_recipe_test.rb")
+	expected := string(exp)
+	assert.NoError(t, err)
+
+	current, err := ParseRecipeFile("parse_recipe_test.rb")
+	assert.NoError(t, err)
+
+	current.Repo = strings.ToLower(current.Repo)
+	current.Owner = "deweysasser"
+
+	buf := bytes.NewBuffer(nil)
+	err = current.Generate(buf)
+	assert.NoError(t, err)
+
+	assert.Equal(t, expected, buf.String())
 }

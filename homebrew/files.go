@@ -42,7 +42,7 @@ func (p PackageFile) Sum() (string, error) {
 	for {
 		n, e := input.Read(bytes)
 		sha.Write(bytes[:n])
-		
+
 		if e != nil {
 			break
 		}

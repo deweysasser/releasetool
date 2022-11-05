@@ -123,6 +123,7 @@ func titleCase(s string) string {
 
 var (
 	classline   = regexp.MustCompile("^class ([a-zA-Z0-9_]*)")
+	descline    = regexp.MustCompile("^[ \t]*desc \"(.*)\"")
 	versionline = regexp.MustCompile("^[ \t]*version \"(v?[0-9\\.]*)\"")
 	fileline    = regexp.MustCompile("^[ \t]*url \"(.*)\"")
 )
@@ -142,15 +143,14 @@ func ParseRecipeFile(file string) (*Recipe, error) {
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		if versionline.MatchString(line) {
-			log.Debug().Msg("Found version line")
-		}
 		if m := classline.FindStringSubmatch(line); m != nil {
 			r.Repo = string(m[1])
 		} else if m := versionline.FindStringSubmatch(line); m != nil {
 			r.Version = string(m[1])
 		} else if m := fileline.FindStringSubmatch(line); m != nil {
 			r.Files = append(r.Files, PackageFile(m[1]))
+		} else if m := descline.FindStringSubmatch(line); m != nil {
+			r.Description = string(m[1])
 		}
 	}
 

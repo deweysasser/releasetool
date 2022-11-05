@@ -18,6 +18,7 @@ type Brew struct {
 }
 
 type FileList struct {
+	Owner   string            `json:"owner"`
 	Recipes []homebrew.Recipe `json:"recipes"`
 }
 
@@ -45,6 +46,11 @@ func (b *Brew) Run(options *Options) error {
 		}
 
 		for _, r := range list.Recipes {
+			r.Normalize()
+			if r.Owner == "" {
+				r.Owner = list.Owner
+			}
+
 			err = b.HandleRecipe(r)
 			if err != nil {
 				return err
@@ -74,11 +80,13 @@ func (b *Brew) Run(options *Options) error {
 
 func (b *Brew) HandleRecipe(r homebrew.Recipe) error {
 	log := log.With().
-		Str("name", r.Repo).
+		Str("owner", r.Owner).
+		Str("repo", r.Repo).
 		Str("desc", r.Description).
 		Logger()
 
 	log.Debug().Msg("Handling recipe")
+
 	out := r.Repo + ".rb"
 
 	err := r.FillFromGithub()

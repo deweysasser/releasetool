@@ -1,4 +1,4 @@
-class {{.Repo}} < Formula
+class {{.Repo | title}} < Formula
   desc "{{.Description}}"
   homepage "https://github.com/{{.Owner}}/{{.Repo}}"
   version "{{.Version}}"

@@ -45,19 +45,16 @@ func (b *Brew) Run(options *Options) error {
 			return err
 		}
 
-		for _, r := range list.Recipes {
+		return parallel[homebrew.Recipe](list.Recipes, func(r homebrew.Recipe) error {
 			r.Normalize()
 			if r.Owner == "" {
 				r.Owner = list.Owner
 			}
 
-			err = b.HandleRecipe(r)
-			if err != nil {
-				return err
-			}
-		}
+			return b.HandleRecipe(r)
+		})
 
-		return nil
+		return err
 	}
 
 	parts := strings.Split(b.Repo, "/")
@@ -110,6 +107,10 @@ func (b *Brew) HandleRecipe(r homebrew.Recipe) error {
 				Str("github_version", r.Version).
 				Msg("Different version on github")
 		}
+	}
+
+	for _, f := range r.Files {
+		go f.Sum() // pre-warm the calculation
 	}
 
 	f, err := os.Create(out)

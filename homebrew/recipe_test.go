@@ -1,4 +1,4 @@
-package program
+package homebrew
 
 import (
 	"github.com/stretchr/testify/assert"
@@ -6,12 +6,12 @@ import (
 )
 
 func Test_filterFiles(t *testing.T) {
-	brew := &Brew{
+	brew := &Recipe{
 		Owner:       "deweysasser",
 		Repo:        "testing",
 		Version:     "v0.1.0",
 		Description: "test description",
-		File: []PackageFile{
+		Files: []PackageFile{
 			"../cumulus/dist/cumulus-darwin-amd64.zip",
 			"../cumulus/dist/cumulus-darwin-arm64.zip",
 			"../cumulus/dist/cumulus-linux-amd64.zip",
@@ -22,7 +22,7 @@ func Test_filterFiles(t *testing.T) {
 	}
 
 	type args struct {
-		b     *Brew
+		b     *Recipe
 		terms []string
 	}
 	tests := []struct {

@@ -1,174 +1,90 @@
 package program
 
 import (
-	"context"
-	"crypto/sha256"
-	_ "embed"
-	"encoding/hex"
 	"errors"
-	"github.com/google/go-github/v48/github"
-	"github.com/rs/zerolog"
+	"github.com/deweysasser/releasetool/homebrew"
 	"github.com/rs/zerolog/log"
-	"io"
-	"net/http"
+	"gopkg.in/yaml.v3"
 	"os"
-	"path/filepath"
 	"strings"
-	"text/template"
 )
 
-//go:embed template.rb
-var recipe string
-
-type PackageFile string
-
 type Brew struct {
-	Owner       string        `help:"Github owner"`
-	Repo        string        `help:"Github repo"`
-	Version     string        `help:"Version of this release"`
-	Description string        `help:"Brew description"`
-	File        []PackageFile `arg:"" optional:""`
+	Version     string                 `help:"Version of this release"`
+	Description string                 `help:"Brew description"`
+	ConfigFile  string                 `short:"f" type:"existingfile" help:"config file from which to read recipe config"`
+	Repo        string                 `arg:"" optional:"" help:"Github owner/repo"`
+	File        []homebrew.PackageFile `arg:"" optional:""`
+}
+
+type FileList struct {
+	Recipes []homebrew.Recipe `json:"recipes"`
+}
+
+func (b *Brew) AfterApply() error {
+	if b.ConfigFile == "" && b.Repo == "" {
+		return errors.New("one of --config-file or repo argument must be specified")
+	}
+	return nil
 }
 
 func (b *Brew) Run(options *Options) error {
 
-	if len(b.File) == 0 {
-		log.Debug().Msg("No files given -- fetching from github")
-		if err := b.FillFromGithub(); err != nil {
+	_ = options
+
+	if b.ConfigFile != "" {
+		log.Debug().Msg("Have config file")
+		list := &FileList{}
+		bytes, err := os.ReadFile(b.ConfigFile)
+		if err != nil {
 			return err
 		}
-	}
+		err = yaml.Unmarshal(bytes, list)
+		if err != nil {
+			return err
+		}
 
-	temp, err := template.New("recipe").
-		Funcs(map[string]any{
-			"files":    filterFiles,
-			"title":    titleCase,
-			"upper":    strings.ToUpper,
-			"lower":    strings.ToLower,
-			"basename": filepath.Base,
-		}).
-		Parse(recipe)
-	if err != nil {
-		return err
-	}
-
-	return temp.Execute(os.Stdout, b)
-}
-
-func titleCase(s string) string {
-	return strings.ToTitle(s[:1]) + strings.ToLower(s[1:])
-}
-
-func (b *Brew) FillFromGithub() error {
-	client := github.NewClient(nil)
-
-	releases, _, err := client.Repositories.ListReleases(context.Background(), b.Owner, b.Repo, &github.ListOptions{})
-
-	if err != nil {
-		return err
-	}
-
-	if len(releases) < 1 {
-		return errors.New("No release found")
-	}
-
-	release := releases[0]
-
-	log.Debug().Str("tag", release.GetTagName()).Msg("Found release")
-
-	b.Version = release.GetTagName()
-	for _, asset := range release.Assets {
-		log.Debug().
-			Str("name", asset.GetName()).
-			Str("url", asset.GetBrowserDownloadURL()).
-			Msg("Found asset")
-		b.File = append(b.File, PackageFile(asset.GetBrowserDownloadURL()))
-	}
-
-	return nil
-}
-
-func filterFiles(b *Brew, terms ...string) []PackageFile {
-	results := make([]PackageFile, 0)
-
-top:
-	for _, f := range b.File {
-		for _, term := range terms {
-			if !strings.Contains(string(f), term) {
-				continue top
+		for _, r := range list.Recipes {
+			err = b.HandleRecipe(r)
+			if err != nil {
+				return err
 			}
 		}
 
-		results = append(results, f)
+		return nil
 	}
 
-	return results
-}
-
-func (p PackageFile) Basename() string {
-	return filepath.Base(string(p))
-}
-
-func (p PackageFile) Sum() (string, error) {
-	var input io.ReadCloser
-
-	if strings.HasPrefix(string(p), "http") {
-		resp, err := http.Get(string(p))
-		if err != nil {
-			return "", err
-		}
-
-		input = resp.Body
-	} else {
-		f, err := os.Open(string(p))
-		if err != nil {
-			return "", err
-		}
-		input = f
+	parts := strings.Split(b.Repo, "/")
+	if len(parts) != 2 {
+		return errors.New("repo must be in format owner/repo: " + b.Repo)
 	}
 
-	defer input.Close()
-	var debugOut io.WriteCloser
+	owner, repo := parts[0], parts[1]
 
-	if zerolog.GlobalLevel() == zerolog.DebugLevel && p.Basename() != string(p) {
-		log.Debug().Str("output_file", p.Basename()).Msg("saving downloaded asset")
-		d, err := os.Create(p.Basename())
-		if err != nil {
-			return "", err
-		}
-		debugOut = d
-		defer d.Close()
+	r := homebrew.Recipe{
+		Owner:       owner,
+		Repo:        repo,
+		Version:     b.Version,
+		Description: b.Description,
+		Files:       b.File,
 	}
 
-	sha := sha256.New()
-	bytes := make([]byte, 32*1024*1024)
+	return r.Generate(os.Stdout)
+}
 
-	for {
-		n, e := input.Read(bytes)
-		log.Debug().Int("read", n).Int("size", len(bytes[:n])).Msg("reading & writing")
-		sha.Write(bytes[:n])
-		if debugOut != nil {
-			debugOut.Write(bytes[:n])
-		}
-		if e != nil {
-			break
-		}
+func (b *Brew) HandleRecipe(r homebrew.Recipe) error {
+	log.Debug().
+		Str("name", r.Repo).
+		Str("desc", r.Description).
+		Msg("Handling recipe")
+	out := r.Repo + ".rb"
+
+	f, err := os.Create(out)
+	if err != nil {
+		return err
 	}
-	return hex.EncodeToString(sha.Sum(nil)), nil
-}
 
-func (p PackageFile) isMacOS() bool {
-	return strings.Contains(string(p), "darwin")
-}
+	defer f.Close()
 
-func (p PackageFile) isLinux() bool {
-	return strings.Contains(string(p), "linux")
-}
-
-func (p PackageFile) isAMD64() bool {
-	return strings.Contains(string(p), "amd64")
-}
-
-func (p PackageFile) isARM64() bool {
-	return strings.Contains(string(p), "arm64")
+	return r.Generate(f)
 }

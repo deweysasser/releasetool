@@ -1,13 +1,16 @@
 package homebrew
 
 import (
+	"bufio"
 	"context"
 	_ "embed"
 	"errors"
 	"github.com/google/go-github/v48/github"
 	"github.com/rs/zerolog/log"
 	"io"
+	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"text/template"
 )
@@ -35,30 +38,31 @@ func (b *Recipe) FillFromGithub() error {
 		b.Description = repo.GetDescription()
 	}
 
-	releases, _, err := client.Repositories.ListReleases(context.Background(), b.Owner, b.Repo, &github.ListOptions{})
+	if b.Version == "" {
+		releases, _, err := client.Repositories.ListReleases(context.Background(), b.Owner, b.Repo, &github.ListOptions{})
 
-	if err != nil {
-		return err
+		if err != nil {
+			return err
+		}
+
+		if len(releases) < 1 {
+			return errors.New("no release found")
+		}
+
+		release := releases[0]
+
+		log.Debug().Str("tag", release.GetTagName()).Msg("Found release")
+
+		// TODO:  if the recipe specifies a release, find it and use that instead
+		b.Version = release.GetTagName()
+		for _, asset := range release.Assets {
+			log.Debug().
+				Str("name", asset.GetName()).
+				Str("url", asset.GetBrowserDownloadURL()).
+				Msg("Found asset")
+			b.Files = append(b.Files, PackageFile(asset.GetBrowserDownloadURL()))
+		}
 	}
-
-	if len(releases) < 1 {
-		return errors.New("no release found")
-	}
-
-	release := releases[0]
-
-	log.Debug().Str("tag", release.GetTagName()).Msg("Found release")
-
-	// TODO:  if the recipe specifies a release, find it and use that instead
-	b.Version = release.GetTagName()
-	for _, asset := range release.Assets {
-		log.Debug().
-			Str("name", asset.GetName()).
-			Str("url", asset.GetBrowserDownloadURL()).
-			Msg("Found asset")
-		b.Files = append(b.Files, PackageFile(asset.GetBrowserDownloadURL()))
-	}
-
 	return nil
 }
 
@@ -115,4 +119,40 @@ func (r *Recipe) Generate(output io.Writer) error {
 
 func titleCase(s string) string {
 	return strings.ToTitle(s[:1]) + strings.ToLower(s[1:])
+}
+
+var (
+	classline   = regexp.MustCompile("^class ([a-zA-Z0-9_]*)")
+	versionline = regexp.MustCompile("^[ \t]*version \"(v?[0-9\\.]*)\"")
+	fileline    = regexp.MustCompile("^[ \t]*url \"(.*)\"")
+)
+
+// ParseRecipeFile reads a ruby recipe file and fills out the recipe information
+func ParseRecipeFile(file string) (*Recipe, error) {
+	r := &Recipe{}
+
+	f, err := os.Open(file)
+	if err != nil {
+		return nil, err
+	}
+
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if versionline.MatchString(line) {
+			log.Debug().Msg("Found version line")
+		}
+		if m := classline.FindStringSubmatch(line); m != nil {
+			r.Repo = string(m[1])
+		} else if m := versionline.FindStringSubmatch(line); m != nil {
+			r.Version = string(m[1])
+		} else if m := fileline.FindStringSubmatch(line); m != nil {
+			r.Files = append(r.Files, PackageFile(m[1]))
+		}
+	}
+
+	return r, nil
 }

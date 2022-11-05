@@ -73,11 +73,36 @@ func (b *Brew) Run(options *Options) error {
 }
 
 func (b *Brew) HandleRecipe(r homebrew.Recipe) error {
-	log.Debug().
+	log := log.With().
 		Str("name", r.Repo).
 		Str("desc", r.Description).
-		Msg("Handling recipe")
+		Logger()
+
+	log.Debug().Msg("Handling recipe")
 	out := r.Repo + ".rb"
+
+	err := r.FillFromGithub()
+	if err != nil {
+		return err
+	}
+
+	if _, err := os.Stat(out); err == nil {
+		log.Debug().Msg("Existing output file")
+		current, err := homebrew.ParseRecipeFile(out)
+		if err != nil {
+			return err
+		}
+
+		if current.Version == r.Version {
+			log.Debug().Msg("Version match. Nothing to do")
+			return nil
+		} else {
+			log.Debug().
+				Str("current_version", current.Version).
+				Str("github_version", r.Version).
+				Msg("Different version on github")
+		}
+	}
 
 	f, err := os.Create(out)
 	if err != nil {

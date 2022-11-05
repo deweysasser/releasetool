@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,7 +19,8 @@ func (p PackageFile) Sum() (string, error) {
 	var input io.ReadCloser
 
 	if strings.HasPrefix(string(p), "http") {
-		resp, err := http.Get(string(p))
+		client := githubHttpClient()
+		resp, err := client.Get(string(p))
 		if err != nil {
 			return "", err
 		}

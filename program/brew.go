@@ -41,7 +41,11 @@ func (b *Brew) Run(options *Options) error {
 
 	temp, err := template.New("recipe").
 		Funcs(map[string]any{
-			"files": filterFiles,
+			"files":    filterFiles,
+			"title":    titleCase,
+			"upper":    strings.ToUpper,
+			"lower":    strings.ToLower,
+			"basename": filepath.Base,
 		}).
 		Parse(recipe)
 	if err != nil {
@@ -49,6 +53,10 @@ func (b *Brew) Run(options *Options) error {
 	}
 
 	return temp.Execute(os.Stdout, b)
+}
+
+func titleCase(s string) string {
+	return strings.ToTitle(s[:1]) + strings.ToLower(s[1:])
 }
 
 func (b *Brew) FillFromGithub() error {

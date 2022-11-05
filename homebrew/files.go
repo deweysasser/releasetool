@@ -3,8 +3,6 @@ package homebrew
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 	"io"
 	"net/http"
 	"os"
@@ -37,17 +35,6 @@ func (p PackageFile) Sum() (string, error) {
 	}
 
 	defer input.Close()
-	var debugOut io.WriteCloser
-
-	if zerolog.GlobalLevel() == zerolog.DebugLevel && p.Basename() != string(p) {
-		log.Debug().Str("output_file", p.Basename()).Msg("saving downloaded asset")
-		d, err := os.Create(p.Basename())
-		if err != nil {
-			return "", err
-		}
-		debugOut = d
-		defer d.Close()
-	}
 
 	sha := sha256.New()
 	bytes := make([]byte, 32*1024*1024)
@@ -55,9 +42,7 @@ func (p PackageFile) Sum() (string, error) {
 	for {
 		n, e := input.Read(bytes)
 		sha.Write(bytes[:n])
-		if debugOut != nil {
-			debugOut.Write(bytes[:n])
-		}
+		
 		if e != nil {
 			break
 		}

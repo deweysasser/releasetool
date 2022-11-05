@@ -110,7 +110,10 @@ func (b *Brew) HandleRecipe(r homebrew.Recipe) error {
 	}
 
 	for _, f := range r.Files {
-		go f.Sum() // pre-warm the calculation
+		// We don't do windows right now, so there's no point in calculating the hash
+		if !strings.Contains(string(f), "-windows-") {
+			go f.Sum() // pre-warm the calculation
+		}
 	}
 
 	f, err := os.Create(out)

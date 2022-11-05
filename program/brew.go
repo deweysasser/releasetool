@@ -30,7 +30,7 @@ type Brew struct {
 	File        []PackageFile `arg:"" optional:""`
 }
 
-func (b *Brew) Run(options Options) error {
+func (b *Brew) Run(options *Options) error {
 
 	if len(b.File) == 0 {
 		log.Debug().Msg("No files given -- fetching from github")

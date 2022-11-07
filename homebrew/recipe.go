@@ -101,6 +101,9 @@ func (b *Recipe) FillFromGithub() error {
 
 func githubHttpClient() *http.Client {
 	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		log.Debug().
+			Str("variable", "GITHUB_TOKEN").
+			Msg("Using value of environment variable as oauth2 token")
 		ctx := context.Background()
 		ts := oauth2.StaticTokenSource(
 			&oauth2.Token{AccessToken: token},
@@ -134,11 +137,13 @@ func init() {
 
 	temp, err := template.New("recipe").
 		Funcs(map[string]any{
-			"files":    filterFiles,
-			"title":    titleCase,
-			"upper":    strings.ToUpper,
-			"lower":    strings.ToLower,
-			"basename": filepath.Base,
+			"files":     filterFiles,
+			"token":     tokenWordsOnly,
+			"title":     titleCase,
+			"camelcase": camelCase,
+			"upper":     strings.ToUpper,
+			"lower":     strings.ToLower,
+			"basename":  filepath.Base,
 		}).
 		Parse(recipe)
 	if err != nil {
@@ -162,8 +167,27 @@ func (r *Recipe) Generate(output io.Writer) error {
 	return recipeTemplate.Execute(output, r)
 }
 
+// These two must be complimentary sets
+var allowedLetters = regexp.MustCompile("[a-zA-Z0-9_]+")
+var disallowedLetters = regexp.MustCompile("[^a-zA-Z0-9_]")
+
+func tokenWordsOnly(s string) string {
+	return disallowedLetters.ReplaceAllString(s, "")
+}
+
+func camelCase(s string) string {
+	parts := disallowedLetters.Split(s, -1)
+	for n, p := range parts {
+		if p != "" {
+			parts[n] = titleCase(p)
+		}
+	}
+
+	return strings.Join(parts, "")
+}
+
 func titleCase(s string) string {
-	return strings.ToTitle(s[:1]) + strings.ToLower(s[1:])
+	return strings.ToTitle(s[:1]) + s[1:]
 }
 
 var (

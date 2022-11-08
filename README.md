@@ -18,3 +18,11 @@ or
 ```shell
 releasetool brew -f repos.yaml
 ```
+
+## Why this tool?
+
+Because I am annoyed by "open core" software that tries to leverage Open Source to build a market
+for proprietary "features". Maybe I'll get over that annoyance and depreate this project. Maybe not.
+
+Also, this tool generates live from github rather than during the build process. Both can be useful
+-- this is the pattern that works for me right now.

@@ -71,7 +71,7 @@ func (b *Recipe) FillFromGithub() error {
 	if b.Description == "" {
 		b.Description = repo.GetDescription()
 	}
-	
+
 	b.PrivateRepo = repo.GetPrivate()
 
 	releases, _, err := client.Repositories.ListReleases(context.Background(), b.Owner, b.Repo, &github.ListOptions{})

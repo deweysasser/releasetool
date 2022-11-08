@@ -25,6 +25,7 @@ type Recipe struct {
 	Repo        string        `json:"repo" yaml:"repo"`
 	Version     string        `json:"-" yaml:"-"`
 	Description string        `json:"description" yaml:"description"`
+	PrivateRepo bool          `json:"-"`
 	Files       []PackageFile `json:"-"`
 }
 
@@ -62,39 +63,41 @@ func (b *Recipe) FillFromGithub() error {
 
 	client := github.NewClient(httpClient)
 
-	if b.Description == "" {
-		repo, _, err := client.Repositories.Get(context.Background(), b.Owner, b.Repo)
-		if err != nil {
-			return err
-		}
-
-		b.Description = repo.GetDescription()
+	repo, _, err := client.Repositories.Get(context.Background(), b.Owner, b.Repo)
+	if err != nil {
+		return err
 	}
 
-	if b.Version == "" {
-		releases, _, err := client.Repositories.ListReleases(context.Background(), b.Owner, b.Repo, &github.ListOptions{})
+	if b.Description == "" {
+		b.Description = repo.GetDescription()
+	}
+	
+	b.PrivateRepo = repo.GetPrivate()
 
-		if err != nil {
-			return err
-		}
+	releases, _, err := client.Repositories.ListReleases(context.Background(), b.Owner, b.Repo, &github.ListOptions{})
 
-		if len(releases) < 1 {
-			return errors.New("no release found")
-		}
+	if err != nil {
+		return err
+	}
 
-		release := releases[0]
+	if len(releases) < 1 {
+		return errors.New("no release found")
+	}
 
-		log.Debug().Str("tag", release.GetTagName()).Msg("Found release")
+	release := releases[0]
 
-		// TODO:  if the recipe specifies a release, find it and use that instead
-		b.Version = release.GetTagName()
-		for _, asset := range release.Assets {
-			log.Debug().
-				Str("name", asset.GetName()).
-				Str("url", asset.GetBrowserDownloadURL()).
-				Msg("Found asset")
-			b.Files = append(b.Files, PackageFile(asset.GetBrowserDownloadURL()))
-		}
+	log.Debug().Str("tag", release.GetTagName()).Msg("Found release")
+
+	// TODO:  if the recipe specifies a release, find it and use that instead
+	b.Version = release.GetTagName()
+	for _, asset := range release.Assets {
+		log.Debug().
+			Str("name", asset.GetName()).
+			Str("browser_url", asset.GetBrowserDownloadURL()).
+			Str("assert_url", asset.GetURL()).
+			Int("size", asset.GetSize()).
+			Msg("Found asset")
+		b.Files = append(b.Files, PackageFile{b.PrivateRepo, asset})
 	}
 	return nil
 }
@@ -120,7 +123,7 @@ func filterFiles(b *Recipe, terms ...string) []PackageFile {
 top:
 	for _, f := range b.Files {
 		for _, term := range terms {
-			if !strings.Contains(string(f), term) {
+			if !strings.Contains(f.String(), term) {
 				continue top
 			}
 		}
@@ -217,7 +220,8 @@ func ParseRecipeFile(file string) (*Recipe, error) {
 		} else if m := versionline.FindStringSubmatch(line); m != nil {
 			r.Version = string(m[1])
 		} else if m := fileline.FindStringSubmatch(line); m != nil {
-			r.Files = append(r.Files, PackageFile(m[1]))
+			//r.Files = append(r.Files, PackageFile(m[1]))
+			// Ignore this for now
 		} else if m := descline.FindStringSubmatch(line); m != nil {
 			r.Description = string(m[1])
 		}

@@ -19,6 +19,24 @@ or
 releasetool brew -f repos.yaml
 ```
 
+## The Config file
+
+```yaml
+owner: deweysasser
+tap: deweysasser/tap
+recipes:
+  - owner: deweysasser
+    repo: cumulus
+    description: Bulk access to multiple AWS clouds
+  - repo: olympus
+
+  - owner: deweysasser
+    repo: cumulus-private
+docs:
+  - file: examples/README-test.md
+    section: "## Software"
+```
+
 ## Why this tool?
 
 Because I am annoyed by "open core" software that tries to leverage Open Source to build a market

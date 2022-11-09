@@ -69,6 +69,7 @@ func (b *Recipe) FillFromGithub() error {
 	}
 
 	if b.Description == "" {
+		// log.Debug().Str("repo_description", repo.GetDescription()).Msg("Filling with repo description")
 		b.Description = repo.GetDescription()
 	}
 

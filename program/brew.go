@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/deweysasser/releasetool/homebrew"
 	"github.com/rs/zerolog/log"
-	"gopkg.in/yaml.v3"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -16,11 +15,6 @@ type Brew struct {
 	Description string   `help:"Brew description"`
 	ConfigFile  string   `short:"f" type:"existingfile" help:"config file from which to read recipe config"`
 	Repo        []string `arg:"" optional:"" help:"Github owner/repo"`
-}
-
-type FileList struct {
-	Owner   string            `json:"owner"`
-	Recipes []homebrew.Recipe `json:"recipes"`
 }
 
 func (b *Brew) AfterApply() error {
@@ -36,24 +30,23 @@ func (b *Brew) Run(options *Options) error {
 
 	var generatedFileCount int64
 
-	var recipes []homebrew.Recipe
+	var recipes []*homebrew.Recipe
+
+	var configFile *ConfigFile
 
 	if b.ConfigFile != "" {
 		log.Debug().Msg("Have config file")
-		list := &FileList{}
-		bytes, err := os.ReadFile(b.ConfigFile)
-		if err != nil {
-			return err
-		}
-		err = yaml.Unmarshal(bytes, list)
+		cf, err := NewConfigFile(b)
 		if err != nil {
 			return err
 		}
 
-		for _, r := range list.Recipes {
+		configFile = cf
+
+		for _, r := range cf.Recipes {
 			r.Normalize()
 			if r.Owner == "" {
-				r.Owner = list.Owner
+				r.Owner = cf.Owner
 			}
 
 			recipes = append(recipes, r)
@@ -69,10 +62,10 @@ func (b *Brew) Run(options *Options) error {
 			return fmt.Errorf("repo %s must have format owner/repo", repo)
 		}
 
-		recipes = append(recipes, r)
+		recipes = append(recipes, &r)
 	}
 
-	err := parallel[homebrew.Recipe](recipes, func(r homebrew.Recipe) error {
+	err := parallel[*homebrew.Recipe](recipes, func(r *homebrew.Recipe) error {
 
 		generated, err := b.HandleRecipe(r)
 		if generated {
@@ -94,10 +87,18 @@ func (b *Brew) Run(options *Options) error {
 		}
 	}
 
+	if configFile != nil {
+		for _, f := range configFile.Docs {
+			if err := f.Update(configFile, recipes); err != nil {
+				return err
+			}
+		}
+	}
+
 	return err
 }
 
-func (b *Brew) HandleRecipe(r homebrew.Recipe) (bool, error) {
+func (b *Brew) HandleRecipe(r *homebrew.Recipe) (bool, error) {
 	log := log.With().
 		Str("owner", r.Owner).
 		Str("repo", r.Repo).

@@ -1,0 +1,12 @@
+owner: deweysasser
+tap: deweysasser/tap
+recipes:
+  - owner: deweysasser
+    repo: cumulus
+    description: "override descrption on github: Bulk access to multiple AWS clouds"
+  - repo: olympus
+  - owner: deweysasser
+    repo: cumulus-private
+docs:
+  - file: examples/README-test.md
+    section: "## Software"

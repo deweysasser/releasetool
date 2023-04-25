@@ -95,8 +95,9 @@ func (b *Recipe) FillFromGithub() error {
 		log.Debug().
 			Str("name", asset.GetName()).
 			Str("browser_url", asset.GetBrowserDownloadURL()).
-			Str("assert_url", asset.GetURL()).
+			Str("asset_url", asset.GetURL()).
 			Int("size", asset.GetSize()).
+			Bool("isPrivate", b.PrivateRepo).
 			Msg("Found asset")
 		b.Files = append(b.Files, PackageFile{b.PrivateRepo, asset})
 	}

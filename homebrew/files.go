@@ -24,6 +24,10 @@ func (p *PackageFile) Basename() string {
 	return filepath.Base(p.GetBrowserDownloadURL())
 }
 
+func (p PackageFile) URL() string {
+	return p.GetURL()
+}
+
 var futures = make(map[PackageFile]func() (string, error))
 
 func (p PackageFile) Sha256() (string, error) {

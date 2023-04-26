@@ -15,14 +15,14 @@ class {{.Repo | camelcase}} < Formula
 
     if Hardware::CPU.intel?
       {{ range (files . "darwin" "amd64")  -}}
-     {{if $private}} url "{{.URL}}", :using => GitHubPrivateRepositoryReleaseDownloadStrategy{{else}} url "https://github.com/{{$owner}}/{{$repo}}/releases/download/{{$version}}/{{.Basename}}"{{end}}
+      {{if $private}}url "{{.URL}}", :using => GitHubPrivateRepositoryReleaseDownloadStrategy{{else}}url "https://github.com/{{$owner}}/{{$repo}}/releases/download/{{$version}}/{{.Basename}}"{{end}}
       sha256 "{{.Sha256}}"
       {{- end}}
     end
 
     if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
       {{ range (files . "darwin" "arm64") -}}
-      {{if $private}} url "{{.URL}}", :using => GitHubPrivateRepositoryReleaseDownloadStrategy{{else}} url "https://github.com/{{$owner}}/{{$repo}}/releases/download/{{$version}}/{{.Basename}}"{{end}}
+      {{if $private}}url "{{.URL}}", :using => GitHubPrivateRepositoryReleaseDownloadStrategy{{else}}url "https://github.com/{{$owner}}/{{$repo}}/releases/download/{{$version}}/{{.Basename}}"{{end}}
       sha256 "{{.Sha256}}"
       {{- end}}
     end
@@ -31,13 +31,13 @@ class {{.Repo | camelcase}} < Formula
   on_linux do
     if Hardware::CPU.intel?
       {{ range (files . "linux" "amd64") -}}
-      {{if $private}} url "{{.URL}}", :using => GitHubPrivateRepositoryReleaseDownloadStrategy{{else}} url "https://github.com/{{$owner}}/{{$repo}}/releases/download/{{$version}}/{{.Basename}}"{{end}}
+      {{if $private}}url "{{.URL}}", :using => GitHubPrivateRepositoryReleaseDownloadStrategy{{else}}url "https://github.com/{{$owner}}/{{$repo}}/releases/download/{{$version}}/{{.Basename}}"{{end}}
       sha256 "{{.Sha256}}"
       {{- end}}
     end
     if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
       {{ range (files . "linux" "arm64") -}}
-      {{if $private}} url "{{.URL}}", :using => GitHubPrivateRepositoryReleaseDownloadStrategy{{else}} url "https://github.com/{{$owner}}/{{$repo}}/releases/download/{{$version}}/{{.Basename}}"{{end}}
+      {{if $private}}url "{{.URL}}", :using => GitHubPrivateRepositoryReleaseDownloadStrategy{{else}}url "https://github.com/{{$owner}}/{{$repo}}/releases/download/{{$version}}/{{.Basename}}"{{end}}
       sha256 "{{.Sha256}}"
       {{- end}}
     end

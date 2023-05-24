@@ -65,7 +65,7 @@ func TestParseRecipeFile(t *testing.T) {
 	current, err := ParseRecipeFile("parse_recipe_test.rb")
 	assert.NoError(t, err)
 
-	assert.Equal(t, "v0.2.0", current.Version)
+	assert.Equal(t, "v0.5.0", current.Version)
 	assert.Equal(t, "Cumulus", current.Repo)
 	//assert.Equal(t, 4, len(current.Files))
 }

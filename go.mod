@@ -1,6 +1,6 @@
 module github.com/deweysasser/releasetool
 
-go 1.19
+go 1.22
 
 require (
 	github.com/alecthomas/kong v0.6.1

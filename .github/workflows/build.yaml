@@ -6,6 +6,7 @@ on:
 name: Build
 env:
   GO_VERSION: 1.22
+  REPO: ${{github.repository}}
 
 jobs:
   build:

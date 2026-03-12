@@ -5,7 +5,7 @@ import (
 	"context"
 	_ "embed"
 	"errors"
-	"github.com/google/go-github/v48/github"
+	"github.com/google/go-github/v84/github"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/oauth2"
 	"io"

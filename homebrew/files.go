@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"github.com/google/go-github/v48/github"
+	"github.com/google/go-github/v84/github"
 	"github.com/rs/zerolog/log"
 	"io"
 	"net/http"

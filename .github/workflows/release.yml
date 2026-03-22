@@ -56,6 +56,15 @@ jobs:
       - build
       - docker-build
     steps:
+    - name: Check for release candidate
+      id: rc-check
+      run: |
+        if [[ "${{ github.ref_name }}" =~ -rc\. ]]; then
+          echo "is_rc=true" >> $GITHUB_OUTPUT
+        else
+          echo "is_rc=false" >> $GITHUB_OUTPUT
+        fi
+
     - uses: actions/checkout@v6
       with:
         fetch-depth: 0
@@ -88,7 +97,8 @@ jobs:
       with:
         files: ./artifacts/*
         body_path: ./CHANGELOG.md
-        draft: false
+        draft: ${{ steps.rc-check.outputs.is_rc == 'true' }}
+        prerelease: ${{ steps.rc-check.outputs.is_rc == 'true' }}
 
   docker-build:
     runs-on: ubuntu-latest
@@ -120,6 +130,14 @@ jobs:
 
       - name: Push Latest
         run: docker push ghcr.io/${{env.REPO}}:latest
+
+      - name: Tag stable
+        if: ${{ !contains(github.ref_name, '-') }}
+        run: docker tag ghcr.io/${{env.REPO}}:${{env.TAG}} ghcr.io/${{env.REPO}}:stable
+
+      - name: Push stable
+        if: ${{ !contains(github.ref_name, '-') }}
+        run: docker push ghcr.io/${{env.REPO}}:stable
 
 # uncomment this if you're also using docker hub
 #      - name: Login to Docker Container Registry

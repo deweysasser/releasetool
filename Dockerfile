@@ -1,5 +1,4 @@
-# GO_VERSION is provided by Makefile via --build-arg; no default intentionally
-ARG GO_VERSION
+ARG GO_VERSION=1.26.0
 FROM golang:${GO_VERSION} AS builder
 ARG PROGRAM=nothing
 ARG VERSION=development

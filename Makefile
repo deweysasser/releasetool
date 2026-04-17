@@ -1,4 +1,4 @@
-
+.PHONY: test
 ifeq ($(shell go env GOOS),windows)
 EXE=.exe
 else
@@ -15,6 +15,7 @@ LAST_RELEASE=
 REPO=$(shell go list | head -n 1)
 IMAGE=$(BASENAME)
 VERSION ?= $(shell git describe --tags --always --dirty)
+GO_VERSION ?= $(shell grep '^go ' go.mod | awk '{print $$2}')
 DOCKER=docker
 PACKAGE=$(DIST)/$(basename $(notdir $(PROGRAM)))-$(shell go env GOOS)-$(shell go env GOARCH).zip
 
@@ -48,7 +49,7 @@ install:
 	go install -ldflags="-X '$(REPO)/program.Version=${VERSION}'"
 
 image: .Dockerfile.tmp
-	$(DOCKER) build -f $< --build-arg PROGRAM=$(BASENAME) --build-arg VERSION=$(VERSION) --build-arg BASENAME=$(BASENAME) -t $(IMAGE) .
+	$(DOCKER) build -f $< --build-arg GO_VERSION=$(GO_VERSION) --build-arg PROGRAM=$(BASENAME) --build-arg VERSION=$(VERSION) --build-arg BASENAME=$(BASENAME) -t $(IMAGE) .
 
 .Dockerfile.tmp: Dockerfile
 	sed -e "s|^ENTRYPOINT.*|ENTRYPOINT [\"/${BASENAME}\"]|" < $< > $@.tmp
@@ -79,6 +80,9 @@ info::
 	@echo PROGRAM=$(PROGRAM)
 	@echo IMAGE=$(IMAGE)
 
+
+update-repo:
+	./utils/update-repo.sh $(NEWREPO)
 
 tools:
 	go install honnef.co/go/tools/cmd/staticcheck@latest

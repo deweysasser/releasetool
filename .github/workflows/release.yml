@@ -4,8 +4,11 @@ on:
   push:
     tags: [ v* ]
 
+permissions:
+  contents: write
+  packages: write
+  
 env:
-  GO_VERSION: 1.22
   REPO: ${{github.repository}}
 
 jobs:
@@ -19,12 +22,12 @@ jobs:
           - GOOS: windows
             ext: .exe
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v6
 
     - name: Set up Go
-      uses: actions/setup-go@v3
+      uses: actions/setup-go@v6
       with:
-        go-version: ${{ env.GO_VERSION}}
+        go-version-file: go.mod
 
     - name: Repo Name
       id: repo-name
@@ -40,9 +43,9 @@ jobs:
         GOARCH: ${{matrix.GOARCH}}
 
     - name: 'Upload Artifact'
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v7
       with:
-        name: artifacts
+        name: artifacts-${{matrix.GOOS}}-${{matrix.GOARCH}}
         path: dist
         retention-days: 1
         if-no-files-found: error
@@ -53,11 +56,24 @@ jobs:
       - build
       - docker-build
     steps:
-    - uses: actions/checkout@v3
+    - name: Check for release candidate
+      id: rc-check
+      run: |
+        if [[ "${{ github.ref_name }}" =~ -rc\. ]]; then
+          echo "is_rc=true" >> $GITHUB_OUTPUT
+        else
+          echo "is_rc=false" >> $GITHUB_OUTPUT
+        fi
+
+    - uses: actions/checkout@v6
       with:
         fetch-depth: 0
     - name: Download Artifacts
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v8
+      with:
+        pattern: artifacts-*
+        path: artifacts
+        merge-multiple: true
 
     - name: Install ChangeLog generator
       run: |
@@ -66,7 +82,7 @@ jobs:
 
     - name: "Get Last Release"
       id: last_release
-      uses: InsonusK/get-latest-release@v1.0.1
+      uses: InsonusK/get-latest-release@v1.1.0
       with:
         myToken: ${{ github.token }}
         exclude_types: "draft|prerelease"
@@ -77,45 +93,56 @@ jobs:
 
     - name: Create Release
       id: create_release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         files: ./artifacts/*
         body_path: ./CHANGELOG.md
-        draft: false
+        draft: ${{ steps.rc-check.outputs.is_rc == 'true' }}
+        prerelease: ${{ steps.rc-check.outputs.is_rc == 'true' }}
 
   docker-build:
     runs-on: ubuntu-latest
     name: Build the docker image
+    env:
+      TAG: ${{ github.ref_name }}
     steps:
+      - name: Sanitize tag
+        run: echo "TAG=${TAG//\//-}" >> $GITHUB_ENV
+
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Checkout
-        uses: actions/checkout@v3
-
-      - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v6
 
       - name: Build Image
-        run: make image IMAGE=ghcr.io/${{env.REPO}}:${{ github.ref_name }}
+        run: make image IMAGE=ghcr.io/${{env.REPO}}:${{env.TAG}}
 
       - name: Tag latest
-        run: docker tag ghcr.io/${{env.REPO}}:${{ github.ref_name }} ghcr.io/${{env.REPO}}:latest
+        run: docker tag ghcr.io/${{env.REPO}}:${{env.TAG}} ghcr.io/${{env.REPO}}:latest
 
       - name: Push
-        run: docker push ghcr.io/${{env.REPO}}:${{ github.ref_name }}
+        run: docker push ghcr.io/${{env.REPO}}:${{env.TAG}}
 
       - name: Push Latest
         run: docker push ghcr.io/${{env.REPO}}:latest
 
+      - name: Tag stable
+        if: ${{ !contains(github.ref_name, '-') }}
+        run: docker tag ghcr.io/${{env.REPO}}:${{env.TAG}} ghcr.io/${{env.REPO}}:stable
+
+      - name: Push stable
+        if: ${{ !contains(github.ref_name, '-') }}
+        run: docker push ghcr.io/${{env.REPO}}:stable
+
 # uncomment this if you're also using docker hub
 #      - name: Login to Docker Container Registry
 #        if: ${{ secrets.DOCKERHUB_TOKEN }}
-#        uses: docker/login-action@v2
+#        uses: docker/login-action@v4
 #        with:
 #          registry: ghcr.io
 #          username: ${{ github.repository_owner }}

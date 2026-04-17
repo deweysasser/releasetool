@@ -1,91 +1,74 @@
 package homebrew
 
 import (
-	"bytes"
 	"github.com/stretchr/testify/assert"
-	"os"
-	"strings"
+	"github.com/stretchr/testify/require"
 	"testing"
 )
 
-//
-//func Test_filterFiles(t *testing.T) {
-//	brew := &Recipe{
-//		Owner:       "deweysasser",
-//		Repo:        "testing",
-//		Version:     "v0.1.0",
-//		Description: "test description",
-//		Files: []PackageFile{
-//			"../cumulus/dist/cumulus-darwin-amd64.zip",
-//			"../cumulus/dist/cumulus-darwin-arm64.zip",
-//			"../cumulus/dist/cumulus-linux-amd64.zip",
-//			"../cumulus/dist/cumulus-linux-arm64.zip",
-//			"../cumulus/dist/cumulus-windows-amd64.zip",
-//			"../cumulus/dist/cumulus-windows-arm64.zip",
-//		},
-//	}
-//
-//	type args struct {
-//		b     *Recipe
-//		terms []string
-//	}
-//	tests := []struct {
-//		name string
-//		args args
-//		want []PackageFile
-//	}{
-//		{
-//			name: "basic",
-//			args: args{b: brew,
-//				terms: []string{"darwin", "amd64"},
-//			},
-//			want: []PackageFile{
-//				"../cumulus/dist/cumulus-darwin-amd64.zip",
-//			},
-//		},
-//		{
-//			name: "several",
-//			args: args{b: brew,
-//				terms: []string{"darwin"},
-//			},
-//			want: []PackageFile{
-//				"../cumulus/dist/cumulus-darwin-amd64.zip",
-//				"../cumulus/dist/cumulus-darwin-arm64.zip",
-//			},
-//		},
-//	}
-//	for _, tt := range tests {
-//		t.Run(tt.name, func(t *testing.T) {
-//			assert.Equalf(t, tt.want, filterFiles(tt.args.b, tt.args.terms...), "filterFiles(%v, %v)", tt.args.b, tt.args.terms)
-//		})
-//	}
-//}
-
 func TestParseRecipeFile(t *testing.T) {
 	current, err := ParseRecipeFile("parse_recipe_test.rb")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	assert.Equal(t, "v0.5.0", current.Version)
 	assert.Equal(t, "Cumulus", current.Repo)
-	//assert.Equal(t, 4, len(current.Files))
+	assert.Equal(t, "A better AWS (and other cloud) CLI", current.Description)
 }
 
-func TestGenerateRecipe(t *testing.T) {
-	exp, err := os.ReadFile("parse_recipe_test.rb")
-	expected := string(exp)
-	assert.NoError(t, err)
+func TestNewRecipe(t *testing.T) {
+	tests := []struct {
+		name        string
+		repo        string
+		owner       string
+		wantOwner   string
+		wantRepo    string
+		wantErr     bool
+	}{
+		{
+			name:      "explicit owner and repo",
+			repo:      "cumulus",
+			owner:     "deweysasser",
+			wantOwner: "deweysasser",
+			wantRepo:  "cumulus",
+		},
+		{
+			name:      "owner inferred from owner/repo form",
+			repo:      "deweysasser/cumulus",
+			owner:     "",
+			wantOwner: "deweysasser",
+			wantRepo:  "cumulus",
+		},
+		{
+			name:    "missing owner and bare repo returns error",
+			repo:    "cumulus",
+			owner:   "",
+			wantErr: true,
+		},
+		{
+			name:    "missing owner and multi-slash repo returns error",
+			repo:    "a/b/c",
+			owner:   "",
+			wantErr: true,
+		},
+	}
 
-	current, err := ParseRecipeFile("parse_recipe_test.rb")
-	assert.NoError(t, err)
-
-	current.Repo = strings.ToLower(current.Repo)
-	current.Owner = "deweysasser"
-
-	buf := bytes.NewBuffer(nil)
-	err = current.Generate(buf)
-	assert.NoError(t, err)
-
-	assert.Equal(t, expected, buf.String())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, err := NewRecipe(tt.repo, tt.owner, "v1.0.0", "desc")
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Nil(t, r)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, r)
+			assert.Equal(t, tt.wantOwner, r.Owner)
+			assert.Equal(t, tt.wantRepo, r.Repo)
+			assert.Equal(t, "v1.0.0", r.Version)
+			assert.Equal(t, "desc", r.Description)
+			assert.NotNil(t, r.Files)
+		})
+	}
 }
 
 func TestRecipe_Normalize(t *testing.T) {

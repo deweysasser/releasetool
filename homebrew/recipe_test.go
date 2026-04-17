@@ -17,12 +17,12 @@ func TestParseRecipeFile(t *testing.T) {
 
 func TestNewRecipe(t *testing.T) {
 	tests := []struct {
-		name        string
-		repo        string
-		owner       string
-		wantOwner   string
-		wantRepo    string
-		wantErr     bool
+		name      string
+		repo      string
+		owner     string
+		wantOwner string
+		wantRepo  string
+		wantErr   bool
 	}{
 		{
 			name:      "explicit owner and repo",

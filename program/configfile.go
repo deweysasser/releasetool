@@ -16,6 +16,12 @@ var templateText string
 
 var sectionTemplate = template.Must(template.New("section").Parse(templateText))
 
+// sectionEndMarker terminates a releasetool-managed section. The section
+// template always emits this marker so subsequent Update runs have a
+// deterministic boundary. If the marker is absent (legacy files), Update
+// falls back to terminating at the next markdown heading.
+const sectionEndMarker = "<!-- releasetool:end -->"
+
 type UpdateDoc struct {
 	// File is the name of the file to update
 	File string `json:"file"`
@@ -87,8 +93,15 @@ func (u *UpdateDoc) Update(configfile *ConfigFile, recipes []*homebrew.Recipe) e
 
 			for scanner.Scan() {
 				line := scanner.Text()
-				// TODO:  put in an explicit end marker
-				if strings.HasPrefix(strings.TrimSpace(line), "#") {
+				trimmed := strings.TrimSpace(line)
+				// Marker terminates the section and is consumed; the template
+				// re-emits a fresh one.
+				if trimmed == sectionEndMarker {
+					break
+				}
+				// Fallback for legacy files without a marker: the next
+				// markdown heading terminates the section and is preserved.
+				if strings.HasPrefix(trimmed, "#") {
 					if _, err := out.Write([]byte(line)); err != nil {
 						return err
 					}

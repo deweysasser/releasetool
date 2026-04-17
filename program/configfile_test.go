@@ -3,6 +3,7 @@ package program
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -148,12 +149,11 @@ func TestUpdate_FileMissing(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// TestUpdate_SectionWithNoTrailingHeading documents a known fragility called out
-// by the TODO in configfile.go: section termination relies on finding a later
-// line that starts with "#". If no such line exists, everything after the
-// section header is discarded. This test pins current behavior so we notice if
-// it changes.
-func TestUpdate_SectionWithNoTrailingHeading(t *testing.T) {
+// TestUpdate_LegacySectionWithNoTrailingHeading documents the first-run
+// behavior on a legacy file that has no end marker and no trailing heading:
+// the section content is consumed, and the marker is written on output so
+// subsequent runs have a deterministic boundary.
+func TestUpdate_LegacySectionWithNoTrailingHeading(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "README.md")
 	writeFile(t, path, `# Project
@@ -174,5 +174,69 @@ but there is no following heading
 	assert.Contains(t, s, "# Project")
 	assert.Contains(t, s, "## Tools")
 	assert.NotContains(t, s, "this content should terminate somewhere",
-		"known behavior: content after the section with no trailing heading is consumed")
+		"first-pass legacy behavior: content in a section with no terminator is consumed")
+	assert.Contains(t, s, sectionEndMarker,
+		"output must include the end marker so future runs terminate precisely")
+}
+
+// TestUpdate_EndMarkerStopsBeforeLaterHeadings verifies that when the file
+// already contains the end marker, the managed region ends at the marker —
+// not at the next heading. Content after the marker is preserved verbatim.
+func TestUpdate_EndMarkerStopsBeforeLaterHeadings(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "README.md")
+	writeFile(t, path, `# Project
+
+## Tools
+OLD MANAGED CONTENT
+`+sectionEndMarker+`
+
+This paragraph sits outside the managed section and must be preserved.
+
+## Other
+also preserved
+`)
+
+	cf := &ConfigFile{Tap: "t"}
+	ud := UpdateDoc{File: path, Section: "## Tools"}
+	require.NoError(t, ud.Update(cf, nil))
+
+	out, err := os.ReadFile(path)
+	require.NoError(t, err)
+	s := string(out)
+
+	assert.NotContains(t, s, "OLD MANAGED CONTENT",
+		"old managed content inside the marker region must be replaced")
+	assert.Contains(t, s, "This paragraph sits outside the managed section and must be preserved.",
+		"content after the end marker must survive the update")
+	assert.Contains(t, s, "## Other")
+	assert.Contains(t, s, "also preserved")
+	assert.Equal(t, 1, strings.Count(s, sectionEndMarker),
+		"exactly one end marker must remain after update")
+}
+
+// TestUpdate_PreservesContentAcrossTwoRuns checks that once a file has been
+// updated once (gaining a marker), a second run is a pure no-op even if the
+// user adds text after the marker.
+func TestUpdate_PreservesContentAcrossTwoRuns(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "README.md")
+	writeFile(t, path, "# Project\n\n## Tools\n")
+
+	cf := &ConfigFile{Tap: "t"}
+	ud := UpdateDoc{File: path, Section: "## Tools"}
+	require.NoError(t, ud.Update(cf, nil))
+
+	// User appends notes after the managed section.
+	current, err := os.ReadFile(path)
+	require.NoError(t, err)
+	augmented := string(current) + "\nSome user-written notes that must persist.\n"
+	require.NoError(t, os.WriteFile(path, []byte(augmented), 0o644))
+
+	require.NoError(t, ud.Update(cf, nil))
+
+	final, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(final), "Some user-written notes that must persist.",
+		"post-marker content added by the user must survive subsequent updates")
 }

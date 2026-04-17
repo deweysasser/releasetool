@@ -58,10 +58,14 @@ func (r *Recipe) Normalize() {
 	}
 }
 
-func (b *Recipe) FillFromGithub() error {
-	httpClient := githubHttpClient()
+// newGithubClient builds the github client used by FillFromGithub. It is a
+// package-level variable so tests can swap it for one pointed at httptest.Server.
+var newGithubClient = func() *github.Client {
+	return github.NewClient(githubHttpClient())
+}
 
-	client := github.NewClient(httpClient)
+func (b *Recipe) FillFromGithub() error {
+	client := newGithubClient()
 
 	repo, _, err := client.Repositories.Get(context.Background(), b.Owner, b.Repo)
 	if err != nil {

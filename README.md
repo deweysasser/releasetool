@@ -37,6 +37,13 @@ docs:
     section: "## Software"
 ```
 
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `GITHUB_TOKEN` | GitHub personal access token. Required when generating formulas for private repositories. Used to authenticate GitHub API requests. |
+| `HOMEBREW_GITHUB_API_TOKEN` | Used by generated Homebrew formulas at install time to download assets from private GitHub repositories. Set this in your Homebrew environment when installing private formulas. |
+
 ## Why this tool?
 
 Because I am annoyed by "open core" software that tries to leverage Open Source to build a market

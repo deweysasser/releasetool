@@ -21,3 +21,4 @@ bin
 .Dockerfile.tmp
 *.rb
 *.zip
+releasetool

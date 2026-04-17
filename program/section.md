@@ -4,4 +4,4 @@
 
   ```brew install {{$prefix}}/{{.Repo}}```
 
-{{end}}
+{{end}}<!-- releasetool:end -->

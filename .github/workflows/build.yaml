@@ -46,11 +46,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v2
 
+      - name: Compute image tag
+        id: tag
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: echo "tag=${REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
+
       - name: Build Image
-        run: make image IMAGE=ghcr.io/${{env.REPO}}:${{ github.ref_name }}
+        run: make image IMAGE=ghcr.io/${{env.REPO}}:${{ steps.tag.outputs.tag }}
 
       - name: Push
-        run: docker push ghcr.io/${{env.REPO}}:${{ github.ref_name }}
+        run: docker push ghcr.io/${{env.REPO}}:${{ steps.tag.outputs.tag }}
 
   format:
     runs-on: ubuntu-latest

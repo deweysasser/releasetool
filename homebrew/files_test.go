@@ -3,8 +3,10 @@ package homebrew
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -112,6 +114,54 @@ func TestSha256_ErrorOnNon200(t *testing.T) {
 	_, err := pf.Sha256()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "410")
+}
+
+// TestSha256_ConcurrentDifferentFiles exercises the package-level futures
+// cache from many goroutines at once with distinct PackageFile keys. This is
+// the access pattern HandleRecipe uses when pre-warming hashes, so it must be
+// safe under -race.
+func TestSha256_ConcurrentDifferentFiles(t *testing.T) {
+	const n = 32
+	payloads := make([][]byte, n)
+	for i := range payloads {
+		payloads[i] = []byte(fmt.Sprintf("artifact-payload-%d", i))
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var idx int
+		if _, err := fmt.Sscanf(r.URL.Path, "/dl/%d.zip", &idx); err != nil || idx < 0 || idx >= n {
+			http.Error(w, "bad path", http.StatusBadRequest)
+			return
+		}
+		w.Write(payloads[idx])
+	}))
+	t.Cleanup(server.Close)
+
+	files := make([]PackageFile, n)
+	for i := range files {
+		files[i] = PackageFile{
+			ReleaseAsset: &github.ReleaseAsset{
+				BrowserDownloadURL: github.Ptr(fmt.Sprintf("%s/dl/%d.zip", server.URL, i)),
+			},
+		}
+	}
+
+	var wg sync.WaitGroup
+	results := make([]string, n)
+	errs := make([]error, n)
+	for i := range files {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			results[i], errs[i] = files[i].Sha256()
+		}(i)
+	}
+	wg.Wait()
+
+	for i := range files {
+		require.NoError(t, errs[i], "goroutine %d", i)
+		assert.Equal(t, expectedSha256(payloads[i]), results[i], "hash mismatch for file %d", i)
+	}
 }
 
 func TestSha256_FutureCachesResult(t *testing.T) {

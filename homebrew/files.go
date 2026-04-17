@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"sync"
 )
 
 type PackageFile struct {
@@ -28,12 +29,17 @@ func (p PackageFile) URL() string {
 	return p.GetURL()
 }
 
-var futures = make(map[PackageFile]func() (string, error))
+var (
+	futuresMu sync.Mutex
+	futures   = make(map[PackageFile]func() (string, error))
+)
 
 func (p PackageFile) Sha256() (string, error) {
 
-	if _, ok := futures[p]; !ok {
-		futures[p] = future(func() (string, error) {
+	futuresMu.Lock()
+	f, ok := futures[p]
+	if !ok {
+		f = future(func() (string, error) {
 
 			log.Debug().Str("file", p.String()).Msg("finding sha256")
 
@@ -93,7 +99,9 @@ func (p PackageFile) Sha256() (string, error) {
 				Msg("Downloaded file")
 			return sumStr, nil
 		})
+		futures[p] = f
 	}
+	futuresMu.Unlock()
 
-	return futures[p]()
+	return f()
 }

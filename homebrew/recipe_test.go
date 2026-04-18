@@ -79,7 +79,7 @@ func TestVersionFilename(t *testing.T) {
 		{"V1.2.0", "1.2.0"},
 		{"1.2.0", "1.2.0"},
 		{"v1.2.0-rc1", "1.2.0-rc1"},
-		{"v1.2.0-rc.1", "1.2.0-rc.1"},     // semver-style dotted identifier is preserved verbatim
+		{"v1.2.0-rc.1", "1.2.0-rc.1"}, // semver-style dotted identifier is preserved verbatim
 		{"v1.2.0-alpha.1", "1.2.0-alpha.1"},
 		{"V2", "2"},
 		{"", ""},

@@ -3,10 +3,12 @@ package program
 import (
 	"bufio"
 	_ "embed"
+	"fmt"
 	"github.com/deweysasser/releasetool/homebrew"
 	"github.com/pkg/errors"
 	"gopkg.in/yaml.v3"
 	"os"
+	"path/filepath"
 	"strings"
 	"text/template"
 )
@@ -39,6 +41,26 @@ type ConfigFile struct {
 	Tap string `json:"tap"`
 }
 
+// validateDocFile rejects UpdateDoc.File paths that would escape the
+// working directory or target an absolute path. The file comes from a
+// YAML config, so a hostile config could otherwise steer writes to any
+// file the user can modify.
+func validateDocFile(p string) error {
+	if p == "" {
+		return errors.New("UpdateDoc.File must not be empty")
+	}
+	if filepath.IsAbs(p) {
+		return fmt.Errorf("UpdateDoc.File %q must be a relative path within the working directory", p)
+	}
+	cleaned := filepath.Clean(p)
+	// filepath.Clean collapses ./a/../b → b, so if ".." is still present
+	// after Clean, the path escapes the working directory.
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.HasPrefix(cleaned, `..\`) {
+		return fmt.Errorf("UpdateDoc.File %q escapes the working directory", p)
+	}
+	return nil
+}
+
 func NewConfigFile(b *Brew) (*ConfigFile, error) {
 	list := &ConfigFile{}
 	bytes, err := os.ReadFile(b.ConfigFile)
@@ -53,6 +75,15 @@ func NewConfigFile(b *Brew) (*ConfigFile, error) {
 }
 
 func (u *UpdateDoc) Update(configfile *ConfigFile, recipes []*homebrew.Recipe) error {
+
+	// Refuse absolute paths and anything that walks out of the working
+	// directory. A YAML config drives this path — without the check, a
+	// malicious config can patch arbitrary files the user has write
+	// access to (e.g. ~/.ssh/authorized_keys, /etc/crontab on shared
+	// hosts).
+	if err := validateDocFile(u.File); err != nil {
+		return err
+	}
 
 	f, err := os.Open(u.File)
 	tmp := u.File + ".tmp"

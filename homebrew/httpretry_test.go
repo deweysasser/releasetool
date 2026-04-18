@@ -130,6 +130,65 @@ func TestRetry_429WithRetryAfterHTTPDate(t *testing.T) {
 	assert.InDelta(t, float64(90*time.Second), float64((*waits)[0]), float64(time.Second))
 }
 
+// oneShotReader lets the test count how many bytes the transport actually
+// pulled from the body — used to prove the cap is honored even when the
+// body is effectively unbounded (a hostile proxy returning a huge 403).
+type oneShotReader struct {
+	src  io.Reader
+	read int
+	mu   sync.Mutex
+}
+
+func (r *oneShotReader) Read(p []byte) (int, error) {
+	n, err := r.src.Read(p)
+	r.mu.Lock()
+	r.read += n
+	r.mu.Unlock()
+	return n, err
+}
+
+func (r *oneShotReader) Close() error { return nil }
+
+// TestRetry_403BodyReadIsCapped proves that when the transport has to
+// look at the body to decide whether a 403 is a rate-limit signal, it
+// reads at most maxRateLimitBodyBytes. Without the cap, a misbehaving
+// proxy returning a gigabyte body on 403 would OOM the tool on CI.
+func TestRetry_403BodyReadIsCapped(t *testing.T) {
+	// Simulate an effectively unbounded body: a reader that yields the
+	// byte 'x' forever. The transport must stop reading at the cap.
+	infinite := &oneShotReader{src: &infiniteByteReader{b: 'x'}}
+	resp := &http.Response{
+		StatusCode: 403,
+		Status:     "403 Forbidden",
+		Header:     http.Header{},
+		Body:       infinite,
+	}
+	stub := &stubTransport{responses: []*http.Response{
+		resp,
+		mkResp(200, nil, "ok"), // retry target — we only care about the body read below
+	}}
+	rt, _ := newTestTransport(stub, time.Now())
+
+	_ = doGet(t, rt)
+
+	infinite.mu.Lock()
+	got := infinite.read
+	infinite.mu.Unlock()
+
+	assert.LessOrEqual(t, got, maxRateLimitBodyBytes,
+		"looksLikeRateLimit must bound its body read; read %d bytes (cap %d)",
+		got, maxRateLimitBodyBytes)
+}
+
+type infiniteByteReader struct{ b byte }
+
+func (r *infiniteByteReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = r.b
+	}
+	return len(p), nil
+}
+
 func TestRetry_403PrimaryRateLimitUsesResetHeader(t *testing.T) {
 	now := time.Date(2026, 4, 17, 22, 0, 0, 0, time.UTC)
 	reset := now.Add(41*time.Minute + 42*time.Second)

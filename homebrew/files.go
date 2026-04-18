@@ -9,6 +9,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -84,6 +85,24 @@ func (p PackageFile) Sha256() (string, error) {
 				url = p.GetBrowserDownloadURL()
 			}
 
+			// Refuse anything other than https:// (or http:// on the
+			// loopback interface) before handing the URL to http.Client.
+			// GitHub's release-asset responses are always https in normal
+			// operation; a compromised GHE, a MitM, or a malicious API
+			// response could point at cloud IMDS (169.254.169.254) or a
+			// LAN host and trick us into fetching and hashing whatever
+			// came back. The loopback carve-out preserves test harnesses
+			// like httptest.Server without opening the SSRF surface —
+			// cloud metadata services and internal hosts live on
+			// non-loopback IPs.
+			parsed, err := neturl.Parse(url)
+			if err != nil {
+				return "", fmt.Errorf("asset url %q: %w", url, err)
+			}
+			if !isAllowedAssetURL(parsed) {
+				return "", fmt.Errorf("refusing to fetch asset over scheme %q (url=%s): only https is allowed, except http on loopback", parsed.Scheme, url)
+			}
+
 			client := githubHttpClient()
 
 			req, err := http.NewRequest("GET", url, nil)
@@ -136,6 +155,24 @@ func (p PackageFile) Sha256() (string, error) {
 	futuresMu.Unlock()
 
 	return f()
+}
+
+// isAllowedAssetURL returns true when the url is safe to fetch for SHA256
+// computation: https anywhere, or http on a loopback host. See the
+// SECURITY comment at the call site for rationale.
+func isAllowedAssetURL(u *neturl.URL) bool {
+	if u == nil {
+		return false
+	}
+	switch u.Scheme {
+	case "https":
+		return true
+	case "http":
+		host := u.Hostname()
+		return host == "127.0.0.1" || host == "::1" || host == "localhost"
+	default:
+		return false
+	}
 }
 
 // sha256FromDigest extracts the hex sha256 from GitHub's release-asset

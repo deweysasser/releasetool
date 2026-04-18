@@ -21,6 +21,13 @@ const (
 	// primary rate-limit reset window (60/hr resets on the hour), which
 	// is the longest wait we realistically expect to honor.
 	defaultMaxSleep = 60 * time.Minute
+	// maxRateLimitBodyBytes caps how much of a 403 response body we buffer
+	// before string-matching "rate limit" / "abuse". GitHub's real error
+	// payloads are a few hundred bytes; anything larger is a misbehaving
+	// intermediary (corporate proxy, captive portal) and reading it in
+	// full could OOM the tool on low-memory CI runners. 64 KiB is well
+	// above any legitimate payload and well below RAM exhaustion.
+	maxRateLimitBodyBytes = 64 * 1024
 )
 
 // rateLimitRetryTransport is an http.RoundTripper that transparently
@@ -164,7 +171,10 @@ func (t *rateLimitRetryTransport) looksLikeRateLimit(resp *http.Response) bool {
 		return true
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	// Bound the read — a hostile or broken proxy returning a 403 with a
+	// multi-GB body would otherwise OOM the process. The cap is above
+	// every real GitHub error payload.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxRateLimitBodyBytes))
 	resp.Body.Close()
 	if err != nil {
 		resp.Body = http.NoBody

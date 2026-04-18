@@ -86,6 +86,13 @@ func (b *Brew) Run(options *Options) error {
 	jobs := make([]fetchJob, len(recipes))
 	for i, base := range recipes {
 		base.Normalize()
+		// Reject owner/repo values that would escape the working
+		// directory once we assemble OutputFile = {Repo}.rb /
+		// {Repo}@{version}.rb. Checking here, before any network call,
+		// fails fast on a malicious config.
+		if err := base.Validate(); err != nil {
+			return fmt.Errorf("recipe %q: %w", base.Repo, err)
+		}
 		jobs[i] = fetchJob{base: base, out: &subsPerBase[i]}
 	}
 

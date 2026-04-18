@@ -5,6 +5,7 @@ import (
 	"context"
 	_ "embed"
 	"errors"
+	"fmt"
 	"github.com/deweysasser/releasetool/timing"
 	"github.com/google/go-github/v84/github"
 	"github.com/rs/zerolog/log"
@@ -68,6 +69,39 @@ func (r *Recipe) Normalize() {
 		r.Owner = parts[0]
 		r.Repo = parts[1]
 	}
+}
+
+// Validate returns an error when fields that will be interpolated into
+// filesystem paths contain characters that could escape the working
+// directory. Owner and Repo land in the output filename
+// ({Repo}.rb / {Repo}@{Version}.rb) and must be safe basename components.
+// Called after Normalize — so by the time we check, a valid "owner/repo"
+// has already been split and any path separator in Repo is a red flag.
+func (r *Recipe) Validate() error {
+	if err := validatePathComponent("owner", r.Owner); err != nil {
+		return err
+	}
+	if err := validatePathComponent("repo", r.Repo); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validatePathComponent rejects empty values and anything that would
+// change the meaning of a path: `..`, leading/embedded separators, NUL.
+// GitHub owners and repo names are constrained to a small alphanumeric
+// set with `-` and `_`, so legitimate values pass trivially.
+func validatePathComponent(field, v string) error {
+	if v == "" {
+		return fmt.Errorf("%s must not be empty", field)
+	}
+	if v == "." || v == ".." {
+		return fmt.Errorf("%s must not be %q", field, v)
+	}
+	if strings.ContainsAny(v, "/\\\x00") {
+		return fmt.Errorf("%s %q contains a path separator or NUL", field, v)
+	}
+	return nil
 }
 
 // newGithubClient builds the github client used by FillFromGithub. It is a
@@ -308,13 +342,14 @@ func init() {
 
 	temp, err := template.New("recipe").
 		Funcs(map[string]any{
-			"files":     filterFiles,
-			"token":     tokenWordsOnly,
-			"title":     titleCase,
-			"camelcase": camelCase,
-			"upper":     strings.ToUpper,
-			"lower":     strings.ToLower,
-			"basename":  filepath.Base,
+			"files":      filterFiles,
+			"token":      tokenWordsOnly,
+			"title":      titleCase,
+			"camelcase":  camelCase,
+			"upper":      strings.ToUpper,
+			"lower":      strings.ToLower,
+			"basename":   filepath.Base,
+			"rubystring": rubyStringEscape,
 		}).
 		Parse(recipe)
 	if err != nil {
@@ -406,6 +441,31 @@ func isPrereleaseTag(tag string) bool {
 
 func tokenWordsOnly(s string) string {
 	return disallowedLetters.ReplaceAllString(s, "")
+}
+
+// rubyStringEscape escapes a string for safe interpolation inside a Ruby
+// double-quoted literal. Without this, a GitHub repo description (or any
+// other user-controlled field the template writes into "..." in Ruby) can
+// break out of the string and inject arbitrary Ruby that executes when
+// `brew install` loads the generated formula — a supply-chain hole from
+// the repo owner to every tap user.
+//
+// Ruby's double-quoted strings are vulnerable to backslash escapes and to
+// unescaped double quotes; they also process `#{...}` interpolation. We
+// neutralize all three:
+//
+//   - `\` → `\\`  (run first, or the replacements below would be re-escaped)
+//   - `"` → `\"`
+//   - `#` → `\#`  (defangs `#{...}` without disturbing isolated `#` chars)
+//
+// Newlines and other control characters remain as-is; Ruby accepts them
+// inside double-quoted literals, and stripping them would corrupt
+// legitimate multi-line descriptions.
+func rubyStringEscape(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	s = strings.ReplaceAll(s, `#`, `\#`)
+	return s
 }
 
 func camelCase(s string) string {

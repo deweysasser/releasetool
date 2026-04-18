@@ -10,6 +10,14 @@ import (
 	"sync/atomic"
 )
 
+// fetchJob is the work unit for the parallel fetch+expand phase. `out` points
+// at the caller's pre-allocated result slot so the goroutine can write without
+// a shared mutex — slot-per-goroutine keeps output order deterministic.
+type fetchJob struct {
+	base *homebrew.Recipe
+	out  *[]*homebrew.Recipe
+}
+
 type Brew struct {
 	Version     string   `help:"Version of this release"`
 	Description string   `help:"Brew description"`
@@ -67,19 +75,36 @@ func (b *Brew) Run(options *Options) error {
 
 	// Expand each configured recipe into (N versioned + optional default)
 	// output recipes — one .rb file per release plus the default unversioned
-	// formula pointing at the newest non-prerelease.
-	var expanded []*homebrew.Recipe
-	var defaults []*homebrew.Recipe
-	for _, base := range recipes {
+	// formula pointing at the newest non-prerelease. Fetching is the slow part
+	// (one Get + paginated ListReleases per repo), so run it concurrently
+	// across all base recipes. Each goroutine writes its expansion into its
+	// own pre-allocated slot in subsPerBase so the combined output order is
+	// deterministic (matches config-file order) — important for the docs step.
+	subsPerBase := make([][]*homebrew.Recipe, len(recipes))
+	jobs := make([]fetchJob, len(recipes))
+	for i, base := range recipes {
 		base.Normalize()
-		releases, err := base.FetchReleases()
+		jobs[i] = fetchJob{base: base, out: &subsPerBase[i]}
+	}
+
+	if err := parallel[fetchJob](jobs, func(j fetchJob) error {
+		releases, err := j.base.FetchReleases()
 		if err != nil {
 			return err
 		}
-		subs := homebrew.ExpandVersions(base, releases)
+		subs := homebrew.ExpandVersions(j.base, releases)
 		if len(subs) == 0 {
-			return fmt.Errorf("no release found for %s/%s", base.Owner, base.Repo)
+			return fmt.Errorf("no release found for %s/%s", j.base.Owner, j.base.Repo)
 		}
+		*j.out = subs
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	var expanded []*homebrew.Recipe
+	var defaults []*homebrew.Recipe
+	for _, subs := range subsPerBase {
 		expanded = append(expanded, subs...)
 		for _, s := range subs {
 			if !strings.Contains(s.OutputFile, "@") {

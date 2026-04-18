@@ -5,6 +5,7 @@ import (
 	"context"
 	_ "embed"
 	"errors"
+	"fmt"
 	"github.com/deweysasser/releasetool/timing"
 	"github.com/google/go-github/v84/github"
 	"github.com/rs/zerolog/log"
@@ -68,6 +69,39 @@ func (r *Recipe) Normalize() {
 		r.Owner = parts[0]
 		r.Repo = parts[1]
 	}
+}
+
+// Validate returns an error when fields that will be interpolated into
+// filesystem paths contain characters that could escape the working
+// directory. Owner and Repo land in the output filename
+// ({Repo}.rb / {Repo}@{Version}.rb) and must be safe basename components.
+// Called after Normalize — so by the time we check, a valid "owner/repo"
+// has already been split and any path separator in Repo is a red flag.
+func (r *Recipe) Validate() error {
+	if err := validatePathComponent("owner", r.Owner); err != nil {
+		return err
+	}
+	if err := validatePathComponent("repo", r.Repo); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validatePathComponent rejects empty values and anything that would
+// change the meaning of a path: `..`, leading/embedded separators, NUL.
+// GitHub owners and repo names are constrained to a small alphanumeric
+// set with `-` and `_`, so legitimate values pass trivially.
+func validatePathComponent(field, v string) error {
+	if v == "" {
+		return fmt.Errorf("%s must not be empty", field)
+	}
+	if v == "." || v == ".." {
+		return fmt.Errorf("%s must not be %q", field, v)
+	}
+	if strings.ContainsAny(v, "/\\\x00") {
+		return fmt.Errorf("%s %q contains a path separator or NUL", field, v)
+	}
+	return nil
 }
 
 // newGithubClient builds the github client used by FillFromGithub. It is a

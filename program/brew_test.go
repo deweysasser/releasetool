@@ -277,6 +277,35 @@ func TestBrew_Run_DedupesAssetDownloadsAcrossDefaultAndNewest(t *testing.T) {
 		assetHits)
 }
 
+// TestBrew_Run_RejectsRepoPathTraversal proves that a YAML config (or
+// a repo arg) containing ".." in the repo name cannot steer OutputFile
+// to a location outside the working directory. Before Recipe.Validate
+// was wired into Brew.Run, a base.Repo of "../../etc/cron.d/evil" would
+// flow through ExpandVersions and produce OutputFile="../../etc/cron.d/evil.rb".
+func TestBrew_Run_RejectsRepoPathTraversal(t *testing.T) {
+	mux := http.NewServeMux()
+	newMockGithub(t, mux)
+	// These handlers would only be hit if validation failed — assert they
+	// never get called by omitting them.
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	b := &Brew{Repo: []string{"o/../../etc/cron.d/evil"}}
+	err := b.Run(&Options{})
+	require.Error(t, err, "malicious repo path must be rejected before any fetch")
+	assert.Contains(t, err.Error(), "repo",
+		"error must identify the offending field: %v", err)
+
+	// Guarantee nothing landed on disk anywhere outside the cwd.
+	entries, readErr := os.ReadDir(dir)
+	require.NoError(t, readErr)
+	for _, e := range entries {
+		assert.False(t, strings.HasSuffix(e.Name(), ".rb"),
+			"no .rb files should be written when validation fails; found %s", e.Name())
+	}
+}
+
 func readAll(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path)

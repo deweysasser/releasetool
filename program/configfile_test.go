@@ -15,6 +15,19 @@ func writeFile(t *testing.T, path, content string) {
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 }
 
+// chdirWithFile creates `name` inside a fresh t.TempDir populated with
+// `content`, chdirs the test process into that tempdir, and returns the
+// plain (relative) filename. Update's path validation rejects absolute
+// paths by design, so tests exercise it through the same relative-path
+// shape that real users write in their YAML config.
+func chdirWithFile(t *testing.T, name, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeFile(t, filepath.Join(dir, name), content)
+	return name
+}
+
 func TestNewConfigFile_Valid(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
@@ -57,9 +70,7 @@ func TestNewConfigFile_Malformed(t *testing.T) {
 }
 
 func TestUpdate_AppendsSectionWhenMissing(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "README.md")
-	writeFile(t, path, "# Project\n\nIntro paragraph.\n")
+	path := chdirWithFile(t, "README.md", "# Project\n\nIntro paragraph.\n")
 
 	cf := &ConfigFile{Tap: "deweysasser/tap"}
 	ud := UpdateDoc{File: path, Section: "## Tools"}
@@ -75,8 +86,6 @@ func TestUpdate_AppendsSectionWhenMissing(t *testing.T) {
 }
 
 func TestUpdate_ReplacesSectionBetweenHeadings(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "README.md")
 	initial := `# Project
 
 ## Tools
@@ -86,7 +95,7 @@ MORE STALE CONTENT
 ## Other
 preserved trailing section
 `
-	writeFile(t, path, initial)
+	path := chdirWithFile(t, "README.md", initial)
 
 	cf := &ConfigFile{Tap: "deweysasser/tap"}
 	ud := UpdateDoc{File: path, Section: "## Tools"}
@@ -105,9 +114,7 @@ preserved trailing section
 }
 
 func TestUpdate_CreatesBackup(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "README.md")
-	writeFile(t, path, "# Project\n")
+	path := chdirWithFile(t, "README.md", "# Project\n")
 
 	cf := &ConfigFile{Tap: "t"}
 	ud := UpdateDoc{File: path, Section: "## Tools"}
@@ -119,9 +126,7 @@ func TestUpdate_CreatesBackup(t *testing.T) {
 }
 
 func TestUpdate_Idempotent(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "README.md")
-	writeFile(t, path, `# Project
+	path := chdirWithFile(t, "README.md", `# Project
 
 ## Tools
 
@@ -143,8 +148,48 @@ func TestUpdate_Idempotent(t *testing.T) {
 		"Update should be idempotent when run twice with the same input")
 }
 
+func TestValidateDocFile(t *testing.T) {
+	tests := []struct {
+		name, in string
+		bad      bool
+	}{
+		{"relative in-repo", "README.md", false},
+		{"nested relative", "docs/index.md", false},
+		{"dot-slash prefix", "./README.md", false},
+		{"empty rejected", "", true},
+		{"absolute path rejected", "/etc/crontab", true},
+		{"traversal rejected", "../../etc/passwd", true},
+		{"windows absolute rejected", `/etc/..`, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateDocFile(tt.in)
+			if tt.bad {
+				assert.Error(t, err, "input %q should be rejected", tt.in)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestUpdate_RejectsAbsolutePath(t *testing.T) {
+	ud := UpdateDoc{File: "/etc/crontab", Section: "## Tools"}
+	err := ud.Update(&ConfigFile{}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "relative path")
+}
+
+func TestUpdate_RejectsTraversal(t *testing.T) {
+	ud := UpdateDoc{File: "../../etc/passwd", Section: "## Tools"}
+	err := ud.Update(&ConfigFile{}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "escapes")
+}
+
 func TestUpdate_FileMissing(t *testing.T) {
-	ud := UpdateDoc{File: filepath.Join(t.TempDir(), "nope.md"), Section: "## Tools"}
+	t.Chdir(t.TempDir())
+	ud := UpdateDoc{File: "nope.md", Section: "## Tools"}
 	err := ud.Update(&ConfigFile{}, nil)
 	assert.Error(t, err)
 }
@@ -154,9 +199,7 @@ func TestUpdate_FileMissing(t *testing.T) {
 // the section content is consumed, and the marker is written on output so
 // subsequent runs have a deterministic boundary.
 func TestUpdate_LegacySectionWithNoTrailingHeading(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "README.md")
-	writeFile(t, path, `# Project
+	path := chdirWithFile(t, "README.md", `# Project
 
 ## Tools
 this content should terminate somewhere
@@ -183,9 +226,7 @@ but there is no following heading
 // already contains the end marker, the managed region ends at the marker —
 // not at the next heading. Content after the marker is preserved verbatim.
 func TestUpdate_EndMarkerStopsBeforeLaterHeadings(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "README.md")
-	writeFile(t, path, `# Project
+	path := chdirWithFile(t, "README.md", `# Project
 
 ## Tools
 OLD MANAGED CONTENT
@@ -219,9 +260,7 @@ also preserved
 // updated once (gaining a marker), a second run is a pure no-op even if the
 // user adds text after the marker.
 func TestUpdate_PreservesContentAcrossTwoRuns(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "README.md")
-	writeFile(t, path, "# Project\n\n## Tools\n")
+	path := chdirWithFile(t, "README.md", "# Project\n\n## Tools\n")
 
 	cf := &ConfigFile{Tap: "t"}
 	ud := UpdateDoc{File: path, Section: "## Tools"}

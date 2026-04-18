@@ -231,6 +231,37 @@ func TestExpandVersions_CopiesBaseFields(t *testing.T) {
 	}
 }
 
+func TestRecipe_Validate(t *testing.T) {
+	tests := []struct {
+		name  string
+		r     Recipe
+		bad   bool
+		field string
+	}{
+		{"happy path", Recipe{Owner: "deweysasser", Repo: "cumulus"}, false, ""},
+		{"hyphen and underscore allowed", Recipe{Owner: "a-b_c", Repo: "my_tool-v2"}, false, ""},
+		{"empty owner rejected", Recipe{Owner: "", Repo: "tool"}, true, "owner"},
+		{"empty repo rejected", Recipe{Owner: "o", Repo: ""}, true, "repo"},
+		{"dotdot owner rejected", Recipe{Owner: "..", Repo: "tool"}, true, "owner"},
+		{"dotdot repo rejected", Recipe{Owner: "o", Repo: ".."}, true, "repo"},
+		{"repo with slash rejected — the traversal case", Recipe{Owner: "o", Repo: "../../etc/cron.d/evil"}, true, "repo"},
+		{"repo with backslash rejected (windows)", Recipe{Owner: "o", Repo: `..\..\windows\system32`}, true, "repo"},
+		{"repo with NUL rejected", Recipe{Owner: "o", Repo: "tool\x00injected"}, true, "repo"},
+		{"owner with slash rejected", Recipe{Owner: "a/b", Repo: "tool"}, true, "owner"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.r.Validate()
+			if tt.bad {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.field)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestRecipe_Normalize(t *testing.T) {
 	type fields struct {
 	}

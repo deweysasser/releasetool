@@ -71,6 +71,161 @@ func TestNewRecipe(t *testing.T) {
 	}
 }
 
+func TestVersionFilename(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"v1.2.0", "1.2.0"},
+		{"V1.2.0", "1.2.0"},
+		{"1.2.0", "1.2.0"},
+		{"v1.2.0-rc1", "1.2.0-rc1"},
+		{"v1.2.0-rc.1", "1.2.0-rc.1"},     // semver-style dotted identifier is preserved verbatim
+		{"v1.2.0-alpha.1", "1.2.0-alpha.1"},
+		{"V2", "2"},
+		{"", ""},
+		{"version-1", "ersion-1"}, // only a single leading v/V is stripped; documents the contract
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			assert.Equal(t, tt.want, versionFilename(tt.in))
+		})
+	}
+}
+
+func TestVersionedClass(t *testing.T) {
+	tests := []struct {
+		repo, version, want string
+	}{
+		{"cumulus", "v1.2.0", "CumulusAT120"},
+		{"cumulus", "1.2.0", "CumulusAT120"},
+		{"my-tool", "v1.2.0-rc1", "MyToolAT120rc1"},
+		{"some.tool", "v1.0.0", "SomeToolAT100"},
+		// Semver-style dotted prerelease identifiers — dots are stripped
+		// by tokenWordsOnly, same as any other non-alphanumeric, so "rc.1"
+		// and "rc1" both collapse to "rc1". That's intentional: the
+		// class name only needs to be a valid Ruby identifier, and the
+		// filename (which keeps the dot) is what Homebrew uses to
+		// disambiguate installs.
+		{"cumulus", "v1.2.0-rc.1", "CumulusAT120rc1"},
+		{"cumulus", "v1.2.0-alpha.1", "CumulusAT120alpha1"},
+		{"cumulus", "v1.2.0-alpha.beta", "CumulusAT120alphabeta"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.repo+"_"+tt.version, func(t *testing.T) {
+			assert.Equal(t, tt.want, versionedClass(tt.repo, tt.version))
+		})
+	}
+}
+
+func TestIsPrereleaseTag(t *testing.T) {
+	prereleases := []string{
+		// Bare suffixes and numeric-only continuations.
+		"v1.0.0-rc1",
+		"v1.0.0-rc",
+		"v1.0.0-alpha",
+		"v1.0.0-pre",
+		"1.0.0-rc1",
+		// Semver-style dotted identifiers.
+		"v1.0.0-rc.1",
+		"v1.0.0-RC.2",
+		"v1.0.0-alpha.1",
+		"v1.0.0-beta.2",
+		"v1.0.0-pre.1",
+		"v1.0.0-alpha.beta",
+		"v1.0.0-rc.0.1",
+		"v1.0.0-alpha.1.2.3",
+	}
+	stable := []string{
+		"v1.0.0",
+		"v1.0.0.1",
+		"1.2.3",
+		"v2",
+		// "-final" / "-release" are not prerelease markers by convention.
+		"v1.0.0-final",
+		"v1.0.0-release.1",
+	}
+	for _, tag := range prereleases {
+		t.Run("pre/"+tag, func(t *testing.T) {
+			assert.True(t, isPrereleaseTag(tag), "%q should be a prerelease tag", tag)
+		})
+	}
+	for _, tag := range stable {
+		t.Run("stable/"+tag, func(t *testing.T) {
+			assert.False(t, isPrereleaseTag(tag), "%q should not be a prerelease tag", tag)
+		})
+	}
+}
+
+func TestExpandVersions_MixedReleases(t *testing.T) {
+	base := &Recipe{Owner: "o", Repo: "cumulus", Description: "d"}
+	releases := []ReleaseInfo{
+		{Version: "v1.2.0-rc1", Prerelease: true},
+		{Version: "v1.1.0", Prerelease: false},
+		{Version: "v1.0.0", Prerelease: false},
+	}
+
+	out := ExpandVersions(base, releases)
+
+	require.Len(t, out, 4, "3 versioned + 1 default")
+
+	// Versioned recipes come first, in release order.
+	assert.Equal(t, "cumulus@1.2.0-rc1.rb", out[0].OutputFile)
+	assert.Equal(t, "CumulusAT120rc1", out[0].ClassName)
+	assert.Equal(t, "v1.2.0-rc1", out[0].Version)
+	assert.True(t, out[0].Prerelease)
+
+	assert.Equal(t, "cumulus@1.1.0.rb", out[1].OutputFile)
+	assert.Equal(t, "CumulusAT110", out[1].ClassName)
+	assert.False(t, out[1].Prerelease)
+
+	assert.Equal(t, "cumulus@1.0.0.rb", out[2].OutputFile)
+	assert.Equal(t, "CumulusAT100", out[2].ClassName)
+
+	// Default is the newest non-prerelease (v1.1.0, not the rc).
+	assert.Equal(t, "cumulus.rb", out[3].OutputFile)
+	assert.Equal(t, "Cumulus", out[3].ClassName)
+	assert.Equal(t, "v1.1.0", out[3].Version)
+	assert.False(t, out[3].Prerelease)
+}
+
+func TestExpandVersions_OnlyPrereleases(t *testing.T) {
+	base := &Recipe{Owner: "o", Repo: "tool"}
+	releases := []ReleaseInfo{
+		{Version: "v1.0.0-rc2", Prerelease: true},
+		{Version: "v1.0.0-rc1", Prerelease: true},
+	}
+
+	out := ExpandVersions(base, releases)
+
+	require.Len(t, out, 2, "no default when there are no stable releases")
+	for _, r := range out {
+		assert.Contains(t, r.OutputFile, "@",
+			"all outputs must be versioned when no stable exists; no bare tool.rb")
+	}
+}
+
+func TestExpandVersions_NoReleases(t *testing.T) {
+	base := &Recipe{Owner: "o", Repo: "tool"}
+	out := ExpandVersions(base, nil)
+	assert.Empty(t, out)
+}
+
+func TestExpandVersions_CopiesBaseFields(t *testing.T) {
+	base := &Recipe{Owner: "o", Repo: "tool", Description: "desc", PrivateRepo: true}
+	releases := []ReleaseInfo{
+		{Version: "v1.0.0", Prerelease: false},
+	}
+
+	out := ExpandVersions(base, releases)
+	require.Len(t, out, 2)
+	for _, r := range out {
+		assert.Equal(t, "o", r.Owner)
+		assert.Equal(t, "tool", r.Repo)
+		assert.Equal(t, "desc", r.Description)
+		assert.True(t, r.PrivateRepo)
+	}
+}
+
 func TestRecipe_Normalize(t *testing.T) {
 	type fields struct {
 	}

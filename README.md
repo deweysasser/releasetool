@@ -7,6 +7,15 @@ A utility for helping make software releases
 Right now this helps me create homebrew recipes for my golang projects by inspecting github and
 generateing recipe files. See [my tap](https://github.com/deweysasser/homebrew-tap) for an example.
 
+For each repo, releasetool writes one Homebrew formula per GitHub release:
+
+- `{repo}.rb` — the **default** formula, pointing at the newest non-prerelease.
+- `{repo}@{version}.rb` — a **versioned** formula per release (including prereleases).
+
+Versioned files are immutable once written; re-running the tool only writes the default when the
+newest stable release has moved. This lets tap users install any historical version or opt into an
+`-rc` build without affecting the default install.
+
 ## Usage
 
 ```shell
@@ -18,6 +27,26 @@ or
 ```shell
 releasetool brew -f repos.yaml
 ```
+
+Installing from the generated tap:
+
+```shell
+brew install deweysasser/tap/cumulus             # newest stable (default)
+brew install deweysasser/tap/cumulus@1.2.0       # a specific stable release
+brew install deweysasser/tap/cumulus@1.2.0-rc1   # opt into a prerelease
+```
+
+## How versions are detected
+
+- **Prerelease flag**: GitHub's `prerelease: true` on a release is authoritative — those releases
+  are emitted as versioned formulas only, never as the default.
+- **Tag-suffix fallback**: tags matching `-rc`, `-alpha`, `-beta`, or `-pre` (case-insensitive) are
+  treated as prereleases even when the flag is not set — both the compact form (`v1.0.0-rc1`) and
+  the semver-dotted form (`v1.0.0-rc.1`, `v1.0.0-alpha.1.2`) are recognized. This is a safety net
+  for repos that tag release candidates without checking the box.
+- **Default selection**: the default unversioned formula points at the newest release that neither
+  rule flags as a prerelease. If a repo has only prereleases, no default formula is written and a
+  warning is logged.
 
 ## The Config file
 

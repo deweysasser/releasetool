@@ -1,4 +1,4 @@
-class {{.Repo | camelcase}} < Formula
+class {{.ClassName}} < Formula
 {{- if .PrivateRepo}}
   require_relative "lib/private_access"
 {{end }}

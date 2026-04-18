@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/deweysasser/releasetool/homebrew"
+	"github.com/deweysasser/releasetool/timing"
 	"github.com/rs/zerolog/log"
 	"os"
 	"strings"
@@ -33,6 +34,7 @@ func (b *Brew) AfterApply() error {
 }
 
 func (b *Brew) Run(options *Options) error {
+	defer timing.Start("Brew.Run").Done()
 
 	_ = options
 
@@ -87,7 +89,8 @@ func (b *Brew) Run(options *Options) error {
 		jobs[i] = fetchJob{base: base, out: &subsPerBase[i]}
 	}
 
-	if err := parallel[fetchJob](jobs, func(j fetchJob) error {
+	fetchTimer := timing.Start("fetch-phase")
+	err := parallel[fetchJob](jobs, func(j fetchJob) error {
 		releases, err := j.base.FetchReleases()
 		if err != nil {
 			return err
@@ -98,7 +101,9 @@ func (b *Brew) Run(options *Options) error {
 		}
 		*j.out = subs
 		return nil
-	}); err != nil {
+	})
+	fetchTimer.Done()
+	if err != nil {
 		return err
 	}
 
@@ -113,7 +118,8 @@ func (b *Brew) Run(options *Options) error {
 		}
 	}
 
-	err := parallel[*homebrew.Recipe](expanded, func(r *homebrew.Recipe) error {
+	generateTimer := timing.Start("generate-phase")
+	err = parallel[*homebrew.Recipe](expanded, func(r *homebrew.Recipe) error {
 
 		generated, err := b.HandleRecipe(r)
 		if generated {
@@ -121,6 +127,7 @@ func (b *Brew) Run(options *Options) error {
 		}
 		return err
 	})
+	generateTimer.Done()
 
 	if err != nil {
 		return err
@@ -147,6 +154,8 @@ func (b *Brew) Run(options *Options) error {
 }
 
 func (b *Brew) HandleRecipe(r *homebrew.Recipe) (bool, error) {
+	defer timing.Start("HandleRecipe " + r.OutputFile).Done()
+
 	log := log.With().
 		Str("owner", r.Owner).
 		Str("repo", r.Repo).

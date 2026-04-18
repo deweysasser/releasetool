@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/deweysasser/releasetool/timing"
 	"github.com/google/go-github/v84/github"
 	"github.com/rs/zerolog/log"
 	"io"
@@ -40,6 +41,8 @@ func (p PackageFile) Sha256() (string, error) {
 	f, ok := futures[p]
 	if !ok {
 		f = future(func() (string, error) {
+			// Timed inside the future so cache hits don't log a bogus download.
+			defer timing.Start("sha256 " + p.String()).Done()
 
 			log.Debug().Str("file", p.String()).Msg("finding sha256")
 

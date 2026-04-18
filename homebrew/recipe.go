@@ -5,6 +5,7 @@ import (
 	"context"
 	_ "embed"
 	"errors"
+	"github.com/deweysasser/releasetool/timing"
 	"github.com/google/go-github/v84/github"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/oauth2"
@@ -89,6 +90,7 @@ type ReleaseInfo struct {
 // GitHub's response (newest first). Repo description and private-repo
 // detection also happen here so callers only need a single trip.
 func (b *Recipe) FetchReleases() ([]ReleaseInfo, error) {
+	defer timing.Start("FetchReleases " + b.Owner + "/" + b.Repo).Done()
 	client := newGithubClient()
 	ctx := context.Background()
 

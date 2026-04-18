@@ -260,7 +260,8 @@ func TestFetchReleases_SemverDottedRCPropagatesEndToEnd(t *testing.T) {
 	require.Len(t, recipes, 3, "2 versioned + 1 default")
 
 	// Find the rc entry by version and assert it maps to the semver-dotted
-	// filename while the class name collapses the dot (tokenWordsOnly).
+	// filename and the class name Homebrew's Formulary.class_s would derive
+	// from that filename.
 	var rc *Recipe
 	for _, r := range recipes {
 		if r.Version == "v1.2.0-rc.1" {
@@ -270,8 +271,8 @@ func TestFetchReleases_SemverDottedRCPropagatesEndToEnd(t *testing.T) {
 	require.NotNil(t, rc, "expected a recipe for v1.2.0-rc.1")
 	assert.Equal(t, "tool@1.2.0-rc.1.rb", rc.OutputFile,
 		"filename must preserve the semver dot so `brew install tool@1.2.0-rc.1` works")
-	assert.Equal(t, "ToolAT120rc1", rc.ClassName,
-		"class name strips the dot (Ruby identifier constraint) but remains unique per version")
+	assert.Equal(t, "ToolAT120Rc1", rc.ClassName,
+		"class name must match Homebrew's class_s, which uppercases the char after each separator")
 	assert.True(t, rc.Prerelease)
 
 	// Default points at the stable release, not the rc.

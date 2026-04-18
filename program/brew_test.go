@@ -92,7 +92,7 @@ func TestBrew_Run_GeneratesDefaultAndVersionedFormulas(t *testing.T) {
 
 	// Versioned RC formula content.
 	rcBody := readAll(t, filepath.Join(dir, "cumulus@1.2.0-rc1.rb"))
-	assert.Contains(t, rcBody, "class CumulusAT120rc1 < Formula")
+	assert.Contains(t, rcBody, "class CumulusAT120Rc1 < Formula")
 	assert.Contains(t, rcBody, `version "v1.2.0-rc1"`)
 
 	// Stable versioned.

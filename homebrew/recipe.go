@@ -27,9 +27,10 @@ type Recipe struct {
 	Description string        `json:"description" yaml:"description"`
 	PrivateRepo bool          `json:"-"`
 	Files       []PackageFile `json:"-"`
-	// ClassName is the Ruby class name used in the rendered formula — either
-	// camelCase(Repo) for the default formula or camelCase(Repo)+"AT"+token
-	// for versioned formulas like "CumulusAT120rc1".
+	// ClassName is the Ruby class name used in the rendered formula. It
+	// must match what Homebrew's Formulary.class_s derives from the
+	// formula's filename (e.g. "cumulus@1.2.0-rc.1.rb" -> CumulusAT120Rc1),
+	// otherwise Homebrew refuses to load the formula.
 	ClassName string `json:"-" yaml:"-"`
 	// OutputFile is the target filename for the generated .rb — "cumulus.rb"
 	// for the default and "cumulus@1.2.0.rb" for versioned formulas.
@@ -177,7 +178,7 @@ func ExpandVersions(base *Recipe, releases []ReleaseInfo) []*Recipe {
 	def.Prerelease = false
 	def.Files = append([]PackageFile(nil), defaultRelease.Files...)
 	def.OutputFile = base.Repo + ".rb"
-	def.ClassName = camelCase(base.Repo)
+	def.ClassName = homebrewClassName(base.Repo)
 	out = append(out, def)
 
 	return out
@@ -297,9 +298,52 @@ func versionFilename(version string) string {
 }
 
 // versionedClass returns the Homebrew versioned-formula class name — e.g.
-// (repo="cumulus", version="v1.2.0-rc1") -> "CumulusAT120rc1".
+// (repo="cumulus", version="v1.2.0-rc.1") -> "CumulusAT120Rc1". It builds
+// the filename stem ("repo@version") and runs it through the class_s
+// transform so the result matches exactly what Homebrew expects when it
+// loads "repo@version.rb".
 func versionedClass(repo, version string) string {
-	return camelCase(repo) + "AT" + tokenWordsOnly(versionFilename(version))
+	return homebrewClassName(repo + "@" + versionFilename(version))
+}
+
+// homebrewSeparatorRE matches Homebrew's class_s separator set
+// (/[-_.\s]([a-zA-Z0-9])/): any hyphen, underscore, dot, or whitespace
+// followed by a single alphanumeric character.
+var homebrewSeparatorRE = regexp.MustCompile(`[-_.\s]([a-zA-Z0-9])`)
+
+// homebrewATRE matches Homebrew's class_s versioned-formula marker
+// (/(.)@(\d)/): any single character, then "@", then a single digit.
+var homebrewATRE = regexp.MustCompile(`(.)@(\d)`)
+
+// homebrewClassName replicates Ruby Homebrew's Formulary.class_s. Matching
+// it exactly is load-bearing: Homebrew derives the expected class name
+// from the .rb filename via this same transform and refuses to load the
+// formula when the class name in the file disagrees.
+//
+// Reference (Library/Homebrew/formulary.rb):
+//
+//	class_name = name.capitalize
+//	class_name.gsub!(/[-_.\s]([a-zA-Z0-9])/) { Regexp.last_match(1).upcase }
+//	class_name.tr!("+", "x")
+//	class_name.sub!(/(.)@(\d)/, '\1AT\2')
+func homebrewClassName(name string) string {
+	if name == "" {
+		return ""
+	}
+	// Ruby's String#capitalize: first char upper, the rest lower.
+	s := strings.ToUpper(name[:1]) + strings.ToLower(name[1:])
+	// Replace each "<sep><alnum>" with the uppercased <alnum>.
+	s = homebrewSeparatorRE.ReplaceAllStringFunc(s, func(m string) string {
+		return strings.ToUpper(m[len(m)-1:])
+	})
+	s = strings.ReplaceAll(s, "+", "x")
+	// Ruby's sub! replaces only the first match; do the same here so a
+	// second "@<digit>" (pathological but legal in a filename) is left
+	// alone.
+	if loc := homebrewATRE.FindStringSubmatchIndex(s); loc != nil {
+		s = s[:loc[0]] + s[loc[2]:loc[3]] + "AT" + s[loc[4]:loc[5]] + s[loc[1]:]
+	}
+	return s
 }
 
 // isPrereleaseTag returns true when a git tag looks like a prerelease by

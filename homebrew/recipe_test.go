@@ -93,22 +93,27 @@ func TestVersionFilename(t *testing.T) {
 }
 
 func TestVersionedClass(t *testing.T) {
+	// The expected values here are what Homebrew's Formulary.class_s
+	// computes from the filename stem (e.g. "cumulus@1.2.0-rc.1"). Homebrew
+	// refuses to load a formula whose class name does not match that value,
+	// so any drift from class_s is a load-time error for the end user.
 	tests := []struct {
 		repo, version, want string
 	}{
 		{"cumulus", "v1.2.0", "CumulusAT120"},
 		{"cumulus", "1.2.0", "CumulusAT120"},
-		{"my-tool", "v1.2.0-rc1", "MyToolAT120rc1"},
+		{"my-tool", "v1.2.0-rc1", "MyToolAT120Rc1"},
 		{"some.tool", "v1.0.0", "SomeToolAT100"},
-		// Semver-style dotted prerelease identifiers — dots are stripped
-		// by tokenWordsOnly, same as any other non-alphanumeric, so "rc.1"
-		// and "rc1" both collapse to "rc1". That's intentional: the
-		// class name only needs to be a valid Ruby identifier, and the
-		// filename (which keeps the dot) is what Homebrew uses to
-		// disambiguate installs.
-		{"cumulus", "v1.2.0-rc.1", "CumulusAT120rc1"},
-		{"cumulus", "v1.2.0-alpha.1", "CumulusAT120alpha1"},
-		{"cumulus", "v1.2.0-alpha.beta", "CumulusAT120alphabeta"},
+		// Semver-style dotted prerelease identifiers: every separator
+		// (dash or dot) causes the following alphanumeric to be uppercased,
+		// matching Homebrew's class_s transform.
+		{"cumulus", "v1.2.0-rc.1", "CumulusAT120Rc1"},
+		{"cumulus", "v1.2.0-alpha.1", "CumulusAT120Alpha1"},
+		{"cumulus", "v1.2.0-alpha.beta", "CumulusAT120AlphaBeta"},
+		// Regression: the exact case that failed on a user's Mac when
+		// `brew install releasetool@0.5.0-rc.1` refused to load the
+		// formula because its class name disagreed with class_s.
+		{"releasetool", "v0.5.0-rc.1", "ReleasetoolAT050Rc1"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.repo+"_"+tt.version, func(t *testing.T) {
@@ -170,7 +175,7 @@ func TestExpandVersions_MixedReleases(t *testing.T) {
 
 	// Versioned recipes come first, in release order.
 	assert.Equal(t, "cumulus@1.2.0-rc1.rb", out[0].OutputFile)
-	assert.Equal(t, "CumulusAT120rc1", out[0].ClassName)
+	assert.Equal(t, "CumulusAT120Rc1", out[0].ClassName)
 	assert.Equal(t, "v1.2.0-rc1", out[0].Version)
 	assert.True(t, out[0].Prerelease)
 

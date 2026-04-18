@@ -8,7 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/deweysasser/releasetool/homebrew"
 	"github.com/google/go-github/v84/github"
@@ -18,7 +21,10 @@ import (
 
 // newMockGithub stands up an httptest.Server and swaps the homebrew package's
 // GitHub client constructor so Brew.Run talks to the mock. Cleanup restores
-// the original on test exit.
+// the original on test exit. It also neutralizes the `gh auth token` fallback
+// (and clears any ambient GITHUB_TOKEN/GH_TOKEN) so Brew.Run doesn't shell
+// out to the real gh CLI during tests — that would be slow, non-hermetic,
+// and would leak the developer's real token into package state.
 func newMockGithub(t *testing.T, handler http.Handler) *httptest.Server {
 	t.Helper()
 	server := httptest.NewServer(handler)
@@ -33,6 +39,13 @@ func newMockGithub(t *testing.T, handler http.Handler) *httptest.Server {
 		return c
 	})
 	t.Cleanup(restore)
+
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "")
+	prevGhAuth := ghAuthToken
+	ghAuthToken = func() (string, error) { return "", assert.AnError }
+	t.Cleanup(func() { ghAuthToken = prevGhAuth })
+
 	return server
 }
 
@@ -140,6 +153,128 @@ func TestBrew_Run_SkipsDefaultWhenOnlyPrereleases(t *testing.T) {
 		_, err := os.Stat(filepath.Join(dir, name))
 		assert.NoError(t, err, "missing versioned prerelease file: %s", name)
 	}
+}
+
+// TestBrew_Run_FetchesReposConcurrently verifies that fetching releases for
+// multiple repos runs in parallel (the wall-clock stays near max(rtt), not
+// sum(rtt)) and that the per-repo result order is deterministic despite the
+// parallelism. The mock server applies a fixed delay to every /releases
+// response; if the fetches were serial, the total run would be >= N*delay,
+// so we assert the run finishes well below that.
+func TestBrew_Run_FetchesReposConcurrently(t *testing.T) {
+	const (
+		numRepos    = 5
+		perRepoWait = 150 * time.Millisecond
+	)
+
+	mux := http.NewServeMux()
+	newMockGithub(t, mux)
+
+	var maxInFlight, curInFlight int32
+	var mu sync.Mutex
+
+	for i := 1; i <= numRepos; i++ {
+		repo := fmt.Sprintf("tool%d", i)
+		// Metadata handler is fast; the release list carries the delay, which
+		// is the dominant cost.
+		mux.HandleFunc("/repos/o/"+repo, func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprint(w, `{}`)
+		})
+		mux.HandleFunc("/repos/o/"+repo+"/releases", func(w http.ResponseWriter, r *http.Request) {
+			cur := atomic.AddInt32(&curInFlight, 1)
+			mu.Lock()
+			if cur > maxInFlight {
+				maxInFlight = cur
+			}
+			mu.Unlock()
+			time.Sleep(perRepoWait)
+			atomic.AddInt32(&curInFlight, -1)
+
+			fmt.Fprintf(w, `[{"tag_name": "v1.0.0", "prerelease": false, "assets": []}]`)
+		})
+	}
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	repoArgs := make([]string, numRepos)
+	for i := range repoArgs {
+		repoArgs[i] = fmt.Sprintf("o/tool%d", i+1)
+	}
+	b := &Brew{Repo: repoArgs}
+
+	start := time.Now()
+	require.NoError(t, b.Run(&Options{}))
+	elapsed := time.Since(start)
+
+	// Parallel-fetch proof: with perRepoWait = 150ms and 5 repos, a serial
+	// fetch would take >= 750ms. A parallel fetch should be closer to 150ms
+	// plus scheduling overhead. A 2x serial budget (300ms) gives plenty of
+	// slack while still catching a regression to serial.
+	assert.Less(t, elapsed, time.Duration(numRepos/2)*perRepoWait,
+		"fetch phase looks serial: elapsed %s vs per-repo wait %s across %d repos",
+		elapsed, perRepoWait, numRepos)
+
+	// Concurrency proof: at least 2 /releases requests were in flight at once.
+	assert.Greater(t, int(maxInFlight), 1,
+		"no concurrent /releases requests observed; fetches ran one at a time")
+
+	// Every repo got both files written.
+	for i := 1; i <= numRepos; i++ {
+		for _, suffix := range []string{".rb", "@1.0.0.rb"} {
+			name := fmt.Sprintf("tool%d%s", i, suffix)
+			_, err := os.Stat(filepath.Join(dir, name))
+			assert.NoError(t, err, "missing %s", name)
+		}
+	}
+}
+
+// TestBrew_Run_DedupesAssetDownloadsAcrossDefaultAndNewest proves that when
+// the default formula reuses the newest release's assets, the futures cache
+// in homebrew/files.go collapses the two recipes' asset sets to a single
+// download per unique URL. Without that dedup, we'd hit the asset handler
+// 12 times (2 versioned × 4 + 1 default × 4) instead of 8.
+func TestBrew_Run_DedupesAssetDownloadsAcrossDefaultAndNewest(t *testing.T) {
+	mux := http.NewServeMux()
+	server := newMockGithub(t, mux)
+
+	mux.HandleFunc("/repos/o/tool", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{}`)
+	})
+
+	assetJSON := func(tag string) string {
+		a := func(platform string) string {
+			url := fmt.Sprintf("%s/dl/%s/tool-%s-%s.tar.gz", server.URL, tag, tag, platform)
+			return fmt.Sprintf(`{"name":"tool-%s-%s.tar.gz","url":"%s","browser_download_url":"%s"}`,
+				tag, platform, url, url)
+		}
+		return fmt.Sprintf(`[%s,%s,%s,%s]`,
+			a("darwin-amd64"), a("darwin-arm64"), a("linux-amd64"), a("linux-arm64"))
+	}
+	mux.HandleFunc("/repos/o/tool/releases", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `[
+			{"tag_name":"v1.0.0","prerelease":false,"assets":%s},
+			{"tag_name":"v0.9.0","prerelease":false,"assets":%s}
+		]`, assetJSON("v1.0.0"), assetJSON("v0.9.0"))
+	})
+
+	var assetHits int32
+	mux.HandleFunc("/dl/", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&assetHits, 1)
+		w.Write([]byte{0})
+	})
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	b := &Brew{Repo: []string{"o/tool"}}
+	require.NoError(t, b.Run(&Options{}))
+
+	assert.Equal(t, int32(8), atomic.LoadInt32(&assetHits),
+		"expected 8 asset downloads (2 releases × 4 platforms); got %d — "+
+			"default-formula assets must share URLs with newest versioned formula "+
+			"so the futures cache dedupes them to one download per URL",
+		assetHits)
 }
 
 func readAll(t *testing.T, path string) string {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -77,6 +78,57 @@ func TestSha256_PrivateFileUsesAPIURL(t *testing.T) {
 		"Accept must be application/octet-stream so the API returns raw bytes")
 	assert.Equal(t, "Bearer test-token-xyz", gotAuth,
 		"GITHUB_TOKEN must be sent as a bearer token for private asset fetches")
+}
+
+// TestSha256_PrivateFileUsesGH_TOKEN mirrors the GITHUB_TOKEN test but
+// exercises the GH_TOKEN fallback — the env var the `gh` CLI sets — to
+// prove it flows through githubHttpClient into the outbound request.
+func TestSha256_PrivateFileUsesGH_TOKEN(t *testing.T) {
+	payload := []byte("gh-token authenticated bytes")
+
+	var gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Write(payload)
+	}))
+	t.Cleanup(server.Close)
+
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "gh-cli-token")
+
+	pf := PackageFile{
+		private:      true,
+		ReleaseAsset: &github.ReleaseAsset{URL: github.Ptr(server.URL + "/repos/o/r/releases/assets/7")},
+	}
+
+	_, err := pf.Sha256()
+	require.NoError(t, err)
+	assert.Equal(t, "Bearer gh-cli-token", gotAuth,
+		"GH_TOKEN must authenticate the request when GITHUB_TOKEN is unset")
+}
+
+// TestSha256_GITHUB_TOKENBeatsGH_TOKEN pins the precedence: when both
+// env vars are set, GITHUB_TOKEN wins. Keeping this explicit in a test
+// means a future refactor can't silently flip the order.
+func TestSha256_GITHUB_TOKENBeatsGH_TOKEN(t *testing.T) {
+	var gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Write([]byte("x"))
+	}))
+	t.Cleanup(server.Close)
+
+	t.Setenv("GITHUB_TOKEN", "from-github-token")
+	t.Setenv("GH_TOKEN", "from-gh-token")
+
+	pf := PackageFile{
+		private:      true,
+		ReleaseAsset: &github.ReleaseAsset{URL: github.Ptr(server.URL + "/repos/o/r/releases/assets/8")},
+	}
+
+	_, err := pf.Sha256()
+	require.NoError(t, err)
+	assert.Equal(t, "Bearer from-github-token", gotAuth)
 }
 
 func TestSha256_PublicFileSendsNoAuth(t *testing.T) {
@@ -161,6 +213,98 @@ func TestSha256_ConcurrentDifferentFiles(t *testing.T) {
 	for i := range files {
 		require.NoError(t, errs[i], "goroutine %d", i)
 		assert.Equal(t, expectedSha256(payloads[i]), results[i], "hash mismatch for file %d", i)
+	}
+}
+
+// TestSha256_UsesAssetDigest verifies the fast path: when GitHub has
+// populated the asset's `digest` field, Sha256 must return the hash from
+// metadata and must not issue any HTTP request.
+func TestSha256_UsesAssetDigest(t *testing.T) {
+	payload := []byte("bytes that MUST NOT be downloaded")
+	want := expectedSha256(payload)
+
+	var hits int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.Write(payload)
+	}))
+	t.Cleanup(server.Close)
+
+	pf := PackageFile{
+		ReleaseAsset: &github.ReleaseAsset{
+			BrowserDownloadURL: github.Ptr(server.URL + "/should-not-be-fetched.zip"),
+			Digest:             github.Ptr("sha256:" + want),
+		},
+	}
+
+	got, err := pf.Sha256()
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+	assert.Equal(t, int32(0), atomic.LoadInt32(&hits),
+		"fast path must not download the asset when GitHub publishes a sha256 digest")
+}
+
+// TestSha256_FallsBackWhenDigestUnusable confirms the download path still
+// runs for assets without a usable digest — historical pre-2025-06 assets
+// return an empty Digest, and we must not claim an unknown hash is valid.
+func TestSha256_FallsBackWhenDigestUnusable(t *testing.T) {
+	payload := []byte("real download fallback")
+
+	cases := []struct {
+		name, digest string
+	}{
+		{"empty", ""},
+		{"wrong_algorithm", "sha512:" + strings.Repeat("a", 128)},
+		{"missing_prefix", strings.Repeat("a", 64)},
+		{"wrong_length", "sha256:deadbeef"},
+		{"non_hex_char", "sha256:" + strings.Repeat("z", 64)},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Write(payload)
+			}))
+			t.Cleanup(server.Close)
+
+			asset := &github.ReleaseAsset{
+				BrowserDownloadURL: github.Ptr(server.URL + "/fallback-" + tc.name + ".zip"),
+			}
+			if tc.digest != "" {
+				asset.Digest = github.Ptr(tc.digest)
+			}
+			pf := PackageFile{ReleaseAsset: asset}
+
+			got, err := pf.Sha256()
+			require.NoError(t, err)
+			assert.Equal(t, expectedSha256(payload), got,
+				"fallback download must compute the real sha256 when the digest is %s", tc.name)
+		})
+	}
+}
+
+func TestSha256FromDigest(t *testing.T) {
+	validHex := strings.Repeat("a", 64)
+	mixedHex := "DEADBEEF" + strings.Repeat("a", 56)
+
+	cases := []struct {
+		name, in, want string
+		ok             bool
+	}{
+		{"valid_lowercase", "sha256:" + validHex, validHex, true},
+		{"valid_mixed_case_normalized", "sha256:" + mixedHex, strings.ToLower(mixedHex), true},
+		{"empty", "", "", false},
+		{"wrong_algorithm", "sha512:" + strings.Repeat("a", 128), "", false},
+		{"missing_colon", "sha256" + validHex, "", false},
+		{"short_hex", "sha256:deadbeef", "", false},
+		{"non_hex", "sha256:" + strings.Repeat("g", 64), "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := sha256FromDigest(tc.in)
+			assert.Equal(t, tc.ok, ok)
+			assert.Equal(t, tc.want, got)
+		})
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	_ "embed"
 	"errors"
+	"github.com/deweysasser/releasetool/timing"
 	"github.com/google/go-github/v84/github"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/oauth2"
@@ -89,6 +90,7 @@ type ReleaseInfo struct {
 // GitHub's response (newest first). Repo description and private-repo
 // detection also happen here so callers only need a single trip.
 func (b *Recipe) FetchReleases() ([]ReleaseInfo, error) {
+	defer timing.Start("FetchReleases " + b.Owner + "/" + b.Repo).Done()
 	client := newGithubClient()
 	ctx := context.Background()
 
@@ -219,19 +221,68 @@ func (b *Recipe) FillFromGithub() error {
 	return nil
 }
 
+// configuredToken, when non-empty, is the bearer token used for GitHub
+// API calls. Set by the CLI via SetToken so callers can source it from
+// places the homebrew package itself does not know about (e.g. `gh auth
+// token`). When empty, githubHttpClient falls back to env lookups.
+var configuredToken string
+
+// tokenAuthDisabled suppresses all authentication, including env-var
+// fallback. Set by SetAuthDisabled for the CLI's --dont-use-token mode.
+var tokenAuthDisabled bool
+
+// SetToken records the bearer token used for authenticated GitHub API
+// calls. Pass "" to defer to environment-variable detection.
+func SetToken(t string) { configuredToken = t }
+
+// SetAuthDisabled forces all subsequent GitHub API calls to be made
+// unauthenticated, ignoring both the configured token and any env vars.
+func SetAuthDisabled(b bool) { tokenAuthDisabled = b }
+
+// AuthStateForTest returns the current auth configuration so higher-level
+// tests can verify that credential resolution landed the expected values
+// in the homebrew package without issuing a network request.
+func AuthStateForTest() (token string, disabled bool) {
+	return configuredToken, tokenAuthDisabled
+}
+
 func githubHttpClient() *http.Client {
-	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
-		log.Debug().
-			Str("variable", "GITHUB_TOKEN").
-			Msg("Using value of environment variable as oauth2 token")
-		ctx := context.Background()
-		ts := oauth2.StaticTokenSource(
-			&oauth2.Token{AccessToken: token},
-		)
-		return oauth2.NewClient(ctx, ts)
+	client := buildBaseGithubHttpClient()
+	// Wrap the transport so both go-github's API calls and our raw
+	// asset downloads in files.go benefit from a single rate-limit
+	// retry policy. Wrapping the oauth2 transport (not wrapping oauth2
+	// around our retry) means the bearer token is re-applied on each
+	// retry; oauth2.Transport already clones the request before adding
+	// the header, so successive retries don't stack the header.
+	client.Transport = newRateLimitRetryTransport(client.Transport)
+	return client
+}
+
+func buildBaseGithubHttpClient() *http.Client {
+	if tokenAuthDisabled {
+		return &http.Client{Transport: http.DefaultTransport}
 	}
 
-	return http.DefaultClient
+	token := configuredToken
+	source := "SetToken"
+	if token == "" {
+		token = os.Getenv("GITHUB_TOKEN")
+		source = "GITHUB_TOKEN"
+	}
+	if token == "" {
+		token = os.Getenv("GH_TOKEN")
+		source = "GH_TOKEN"
+	}
+	if token == "" {
+		return &http.Client{Transport: http.DefaultTransport}
+	}
+
+	log.Debug().Str("source", source).Msg("Using bearer token for GitHub API")
+	ctx := context.Background()
+	ts := oauth2.StaticTokenSource(
+		&oauth2.Token{AccessToken: token},
+	)
+	return oauth2.NewClient(ctx, ts)
 }
 
 func filterFiles(b *Recipe, terms ...string) []PackageFile {

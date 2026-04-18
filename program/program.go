@@ -21,6 +21,7 @@ type Options struct {
 	Debug        bool   `group:"Info" help:"Show debugging information"`
 	OutputFormat string `group:"Info" enum:"auto,jsonl,terminal" default:"auto" help:"How to show program output (auto|terminal|jsonl)"`
 	Quiet        bool   `group:"Info" help:"Be less verbose than usual"`
+	DontUseToken bool   `group:"Info" help:"Do not authenticate GitHub API calls (skip GITHUB_TOKEN, GH_TOKEN, and 'gh auth token'). Requests will be subject to the 60 req/hr anonymous rate limit."`
 }
 
 // Parse calls the CLI parsing routines

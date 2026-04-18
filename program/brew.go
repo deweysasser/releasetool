@@ -36,7 +36,7 @@ func (b *Brew) AfterApply() error {
 func (b *Brew) Run(options *Options) error {
 	defer timing.Start("Brew.Run").Done()
 
-	_ = options
+	resolveGithubCredentials(options.DontUseToken)
 
 	var generatedFileCount int64
 

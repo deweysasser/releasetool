@@ -80,6 +80,57 @@ func TestSha256_PrivateFileUsesAPIURL(t *testing.T) {
 		"GITHUB_TOKEN must be sent as a bearer token for private asset fetches")
 }
 
+// TestSha256_PrivateFileUsesGH_TOKEN mirrors the GITHUB_TOKEN test but
+// exercises the GH_TOKEN fallback — the env var the `gh` CLI sets — to
+// prove it flows through githubHttpClient into the outbound request.
+func TestSha256_PrivateFileUsesGH_TOKEN(t *testing.T) {
+	payload := []byte("gh-token authenticated bytes")
+
+	var gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Write(payload)
+	}))
+	t.Cleanup(server.Close)
+
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "gh-cli-token")
+
+	pf := PackageFile{
+		private:      true,
+		ReleaseAsset: &github.ReleaseAsset{URL: github.Ptr(server.URL + "/repos/o/r/releases/assets/7")},
+	}
+
+	_, err := pf.Sha256()
+	require.NoError(t, err)
+	assert.Equal(t, "Bearer gh-cli-token", gotAuth,
+		"GH_TOKEN must authenticate the request when GITHUB_TOKEN is unset")
+}
+
+// TestSha256_GITHUB_TOKENBeatsGH_TOKEN pins the precedence: when both
+// env vars are set, GITHUB_TOKEN wins. Keeping this explicit in a test
+// means a future refactor can't silently flip the order.
+func TestSha256_GITHUB_TOKENBeatsGH_TOKEN(t *testing.T) {
+	var gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Write([]byte("x"))
+	}))
+	t.Cleanup(server.Close)
+
+	t.Setenv("GITHUB_TOKEN", "from-github-token")
+	t.Setenv("GH_TOKEN", "from-gh-token")
+
+	pf := PackageFile{
+		private:      true,
+		ReleaseAsset: &github.ReleaseAsset{URL: github.Ptr(server.URL + "/repos/o/r/releases/assets/8")},
+	}
+
+	_, err := pf.Sha256()
+	require.NoError(t, err)
+	assert.Equal(t, "Bearer from-github-token", gotAuth)
+}
+
 func TestSha256_PublicFileSendsNoAuth(t *testing.T) {
 	// Public path goes through http.DefaultClient when GITHUB_TOKEN is unset,
 	// so no Authorization header should be attached.

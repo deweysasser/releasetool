@@ -21,7 +21,10 @@ import (
 
 // newMockGithub stands up an httptest.Server and swaps the homebrew package's
 // GitHub client constructor so Brew.Run talks to the mock. Cleanup restores
-// the original on test exit.
+// the original on test exit. It also neutralizes the `gh auth token` fallback
+// (and clears any ambient GITHUB_TOKEN/GH_TOKEN) so Brew.Run doesn't shell
+// out to the real gh CLI during tests — that would be slow, non-hermetic,
+// and would leak the developer's real token into package state.
 func newMockGithub(t *testing.T, handler http.Handler) *httptest.Server {
 	t.Helper()
 	server := httptest.NewServer(handler)
@@ -36,6 +39,13 @@ func newMockGithub(t *testing.T, handler http.Handler) *httptest.Server {
 		return c
 	})
 	t.Cleanup(restore)
+
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "")
+	prevGhAuth := ghAuthToken
+	ghAuthToken = func() (string, error) { return "", assert.AnError }
+	t.Cleanup(func() { ghAuthToken = prevGhAuth })
+
 	return server
 }
 

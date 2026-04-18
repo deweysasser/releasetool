@@ -66,11 +66,39 @@ docs:
     section: "## Software"
 ```
 
+## Authenticating to GitHub
+
+Unauthenticated GitHub API requests are limited to 60/hour per IP, which is
+easy to exhaust when generating formulas for several repositories. The tool
+resolves a token from the first source available, in this order:
+
+1. `GITHUB_TOKEN` environment variable.
+2. `GH_TOKEN` environment variable (the one `gh` CLI sets).
+3. `gh auth token` — if the `gh` CLI is installed and you've run `gh auth
+   login`, the tool will reuse that session. No extra configuration needed.
+
+Pass `--dont-use-token` to force unauthenticated requests regardless of any
+of the above — useful for debugging or running against public repositories
+on a shared runner.
+
+## Rate-limit handling
+
+If GitHub responds with 429 Too Many Requests, or with a 403 Forbidden that
+looks like a rate-limit hit (`X-RateLimit-Remaining: 0` for primary limits,
+`Retry-After` or a "secondary rate limit"/"abuse" body for secondary
+limits), the tool transparently retries with backoff. Waits come from, in
+order, the server's `Retry-After` header (delta-seconds or HTTP-date),
+GitHub's `X-RateLimit-Reset` timestamp, or exponential backoff from 1s
+doubling to 60s. Any single wait is capped at 60 minutes so a misbehaving
+server can't park the process indefinitely, and the request's context is
+honored during the wait (Ctrl-C still interrupts).
+
 ## Environment Variables
 
 | Variable | Description |
 |----------|-------------|
 | `GITHUB_TOKEN` | GitHub personal access token. Required when generating formulas for private repositories. Used to authenticate GitHub API requests. |
+| `GH_TOKEN` | Alternate name honored by the `gh` CLI. Used when `GITHUB_TOKEN` is unset. |
 | `HOMEBREW_GITHUB_API_TOKEN` | Used by generated Homebrew formulas at install time to download assets from private GitHub repositories. Set this in your Homebrew environment when installing private formulas. |
 
 ## Why this tool?

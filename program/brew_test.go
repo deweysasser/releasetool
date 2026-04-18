@@ -219,6 +219,54 @@ func TestBrew_Run_FetchesReposConcurrently(t *testing.T) {
 	}
 }
 
+// TestBrew_Run_DedupesAssetDownloadsAcrossDefaultAndNewest proves that when
+// the default formula reuses the newest release's assets, the futures cache
+// in homebrew/files.go collapses the two recipes' asset sets to a single
+// download per unique URL. Without that dedup, we'd hit the asset handler
+// 12 times (2 versioned × 4 + 1 default × 4) instead of 8.
+func TestBrew_Run_DedupesAssetDownloadsAcrossDefaultAndNewest(t *testing.T) {
+	mux := http.NewServeMux()
+	server := newMockGithub(t, mux)
+
+	mux.HandleFunc("/repos/o/tool", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{}`)
+	})
+
+	assetJSON := func(tag string) string {
+		a := func(platform string) string {
+			url := fmt.Sprintf("%s/dl/%s/tool-%s-%s.tar.gz", server.URL, tag, tag, platform)
+			return fmt.Sprintf(`{"name":"tool-%s-%s.tar.gz","url":"%s","browser_download_url":"%s"}`,
+				tag, platform, url, url)
+		}
+		return fmt.Sprintf(`[%s,%s,%s,%s]`,
+			a("darwin-amd64"), a("darwin-arm64"), a("linux-amd64"), a("linux-arm64"))
+	}
+	mux.HandleFunc("/repos/o/tool/releases", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `[
+			{"tag_name":"v1.0.0","prerelease":false,"assets":%s},
+			{"tag_name":"v0.9.0","prerelease":false,"assets":%s}
+		]`, assetJSON("v1.0.0"), assetJSON("v0.9.0"))
+	})
+
+	var assetHits int32
+	mux.HandleFunc("/dl/", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&assetHits, 1)
+		w.Write([]byte{0})
+	})
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	b := &Brew{Repo: []string{"o/tool"}}
+	require.NoError(t, b.Run(&Options{}))
+
+	assert.Equal(t, int32(8), atomic.LoadInt32(&assetHits),
+		"expected 8 asset downloads (2 releases × 4 platforms); got %d — "+
+			"default-formula assets must share URLs with newest versioned formula "+
+			"so the futures cache dedupes them to one download per URL",
+		assetHits)
+}
+
 func readAll(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path)

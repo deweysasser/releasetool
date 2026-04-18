@@ -97,7 +97,6 @@ jobs:
       with:
         files: ./artifacts/*
         body_path: ./CHANGELOG.md
-        draft: ${{ steps.rc-check.outputs.is_rc == 'true' }}
         prerelease: ${{ steps.rc-check.outputs.is_rc == 'true' }}
 
   docker-build:

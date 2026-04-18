@@ -308,13 +308,14 @@ func init() {
 
 	temp, err := template.New("recipe").
 		Funcs(map[string]any{
-			"files":     filterFiles,
-			"token":     tokenWordsOnly,
-			"title":     titleCase,
-			"camelcase": camelCase,
-			"upper":     strings.ToUpper,
-			"lower":     strings.ToLower,
-			"basename":  filepath.Base,
+			"files":      filterFiles,
+			"token":      tokenWordsOnly,
+			"title":      titleCase,
+			"camelcase":  camelCase,
+			"upper":      strings.ToUpper,
+			"lower":      strings.ToLower,
+			"basename":   filepath.Base,
+			"rubystring": rubyStringEscape,
 		}).
 		Parse(recipe)
 	if err != nil {
@@ -406,6 +407,31 @@ func isPrereleaseTag(tag string) bool {
 
 func tokenWordsOnly(s string) string {
 	return disallowedLetters.ReplaceAllString(s, "")
+}
+
+// rubyStringEscape escapes a string for safe interpolation inside a Ruby
+// double-quoted literal. Without this, a GitHub repo description (or any
+// other user-controlled field the template writes into "..." in Ruby) can
+// break out of the string and inject arbitrary Ruby that executes when
+// `brew install` loads the generated formula — a supply-chain hole from
+// the repo owner to every tap user.
+//
+// Ruby's double-quoted strings are vulnerable to backslash escapes and to
+// unescaped double quotes; they also process `#{...}` interpolation. We
+// neutralize all three:
+//
+//   - `\` → `\\`  (run first, or the replacements below would be re-escaped)
+//   - `"` → `\"`
+//   - `#` → `\#`  (defangs `#{...}` without disturbing isolated `#` chars)
+//
+// Newlines and other control characters remain as-is; Ruby accepts them
+// inside double-quoted literals, and stripping them would corrupt
+// legitimate multi-line descriptions.
+func rubyStringEscape(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	s = strings.ReplaceAll(s, `#`, `\#`)
+	return s
 }
 
 func camelCase(s string) string {

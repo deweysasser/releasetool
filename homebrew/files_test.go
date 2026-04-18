@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	neturl "net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -151,6 +152,70 @@ func TestSha256_PublicFileSendsNoAuth(t *testing.T) {
 	_, err := pf.Sha256()
 	require.NoError(t, err)
 	assert.Empty(t, gotAuth, "public Sha256 fetch must not attach an Authorization header")
+}
+
+func TestSha256_RejectsNonLoopbackHTTP(t *testing.T) {
+	// Asset with no digest (forces the download path) and a non-loopback
+	// http URL — e.g. cloud IMDS. Without this guard, the tool would fetch
+	// whatever that endpoint returns and encode its hash into the formula.
+	pf := PackageFile{
+		ReleaseAsset: &github.ReleaseAsset{
+			BrowserDownloadURL: github.Ptr("http://169.254.169.254/latest/meta-data/"),
+		},
+	}
+	_, err := pf.Sha256()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "http",
+		"error must identify the rejected scheme so operators can diagnose")
+}
+
+func TestSha256_RejectsFileURL(t *testing.T) {
+	pf := PackageFile{
+		ReleaseAsset: &github.ReleaseAsset{
+			BrowserDownloadURL: github.Ptr("file:///etc/passwd"),
+		},
+	}
+	_, err := pf.Sha256()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "file")
+}
+
+func TestSha256_RejectsLANHost(t *testing.T) {
+	// A plausible SSRF target on a corporate LAN — must be blocked even
+	// though the private IP range is often reachable from dev machines.
+	pf := PackageFile{
+		ReleaseAsset: &github.ReleaseAsset{
+			BrowserDownloadURL: github.Ptr("http://10.0.0.5/secret"),
+		},
+	}
+	_, err := pf.Sha256()
+	require.Error(t, err)
+}
+
+func TestIsAllowedAssetURL(t *testing.T) {
+	cases := []struct {
+		url  string
+		want bool
+	}{
+		{"https://github.com/o/r/releases/download/v1/foo.tgz", true},
+		{"https://objects.githubusercontent.com/.../foo.tgz", true},
+		{"http://127.0.0.1:8080/test.tgz", true},
+		{"http://[::1]:8080/test.tgz", true},
+		{"http://localhost/test.tgz", true},
+		{"http://169.254.169.254/metadata", false},
+		{"http://10.0.0.5/secret", false},
+		{"http://example.com/foo.tgz", false},
+		{"file:///etc/passwd", false},
+		{"ftp://example.com/foo.tgz", false},
+		{"gopher://evil", false},
+	}
+	for _, c := range cases {
+		t.Run(c.url, func(t *testing.T) {
+			u, err := neturl.Parse(c.url)
+			require.NoError(t, err)
+			assert.Equal(t, c.want, isAllowedAssetURL(u))
+		})
+	}
 }
 
 func TestSha256_ErrorOnNon200(t *testing.T) {

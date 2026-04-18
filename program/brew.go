@@ -65,7 +65,30 @@ func (b *Brew) Run(options *Options) error {
 		recipes = append(recipes, &r)
 	}
 
-	err := parallel[*homebrew.Recipe](recipes, func(r *homebrew.Recipe) error {
+	// Expand each configured recipe into (N versioned + optional default)
+	// output recipes — one .rb file per release plus the default unversioned
+	// formula pointing at the newest non-prerelease.
+	var expanded []*homebrew.Recipe
+	var defaults []*homebrew.Recipe
+	for _, base := range recipes {
+		base.Normalize()
+		releases, err := base.FetchReleases()
+		if err != nil {
+			return err
+		}
+		subs := homebrew.ExpandVersions(base, releases)
+		if len(subs) == 0 {
+			return fmt.Errorf("no release found for %s/%s", base.Owner, base.Repo)
+		}
+		expanded = append(expanded, subs...)
+		for _, s := range subs {
+			if !strings.Contains(s.OutputFile, "@") {
+				defaults = append(defaults, s)
+			}
+		}
+	}
+
+	err := parallel[*homebrew.Recipe](expanded, func(r *homebrew.Recipe) error {
 
 		generated, err := b.HandleRecipe(r)
 		if generated {
@@ -89,7 +112,7 @@ func (b *Brew) Run(options *Options) error {
 
 	if configFile != nil {
 		for _, f := range configFile.Docs {
-			if err := f.Update(configFile, recipes); err != nil {
+			if err := f.Update(configFile, defaults); err != nil {
 				return err
 			}
 		}
@@ -103,18 +126,22 @@ func (b *Brew) HandleRecipe(r *homebrew.Recipe) (bool, error) {
 		Str("owner", r.Owner).
 		Str("repo", r.Repo).
 		Str("desc", r.Description).
+		Str("version", r.Version).
+		Str("output", r.OutputFile).
 		Logger()
 
 	log.Debug().Msg("Handling recipe")
 
-	out := r.Repo + ".rb"
-
-	err := r.FillFromGithub()
-	if err != nil {
-		return false, err
-	}
+	out := r.OutputFile
+	versioned := strings.Contains(out, "@")
 
 	if _, err := os.Stat(out); err == nil {
+		if versioned {
+			// Versioned formulas are immutable once written — a given
+			// (repo, version) always produces the same content.
+			log.Debug().Msg("Versioned formula exists; skipping")
+			return false, nil
+		}
 		log.Debug().Msg("Existing output file")
 		current, err := homebrew.ParseRecipeFile(out)
 		if err != nil {
